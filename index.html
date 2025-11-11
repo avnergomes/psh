@@ -28,8 +28,18 @@
     </div>
     <h1 class="header-title">Programa de Segurança Hídrica - PSH</h1>
     <button id="fitAll" class="btn" type="button">Ajustar visão</button>
+    <div class="theme-select" title="Alterar o tema cartográfico do mapa base.">
+      <label for="themePreset">Tema</label>
+      <select id="themePreset">
+        <option value="light">Claro</option>
+        <option value="streets">Padrão</option>
+        <option value="satellite">Satélite</option>
+        <option value="terrain">Topográfico</option>
+        <option value="dark">Escuro</option>
+      </select>
+    </div>
     <div class="slider-row">
-      <span class="muted">Opacidade</span>
+      <span class="muted">Opacidade padrão</span>
       <input id="opacity" type="range" min="20" max="100" value="70" />
       <span id="opacityVal" class="muted">70%</span>
     </div>
@@ -41,6 +51,7 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://unpkg.com/pako@2.1.0/dist/pako.min.js"></script>
   <script src="https://unpkg.com/@turf/turf@6.5.0/turf.min.js"></script>
+  <script src="utils/microAggregation.js" defer></script>
   <script src="script.js" defer></script>
 </body>
 </html>
