@@ -52,6 +52,7 @@
   const MICRO_MANANCIAL_FIELDS = ['Manancial', 'MANANCIAL', 'Microbacias_Manancial'];
   const USO_FIELDS = ['Nivel_II', 'NIVEL_II', 'nivel_ii'];
   const USO_FALLBACK_FIELDS = ['Nivel_I', 'NIVEL_I', 'nivel_i'];
+  const DECLIVIDADE_FIELDS = ['ClDec', 'CLDEC', 'cldec'];
 
   // Cores para uso do solo
   const USO_COLORS = {
@@ -72,6 +73,30 @@
     'Áreas Antrópicas Agrícolas': '#e6ab02',
     'Áreas Antrópicas Não Agrícolas': '#6a51a3'
   };
+
+  const DECLIVIDADE_CLASS_LOOKUP = {
+    '000a003': { label: '0% a 3%', color: '#edf8fb' },
+    '003a008': { label: '3% a 8%', color: '#d0e1f2' },
+    '008a015': { label: '8% a 15%', color: '#a6bddb' },
+    '015a025': { label: '15% a 25%', color: '#74a9cf' },
+    '025a045': { label: '25% a 45%', color: '#2b8cbe' },
+    '045a100': { label: '45% a 100%', color: '#045a8d' },
+    '>100': { label: '> 100%', color: '#023858' }
+  };
+
+  const DECLIVIDADE_LABEL_TO_COLOR = Object.create(null);
+  Object.values(DECLIVIDADE_CLASS_LOOKUP).forEach(entry => {
+    DECLIVIDADE_LABEL_TO_COLOR[entry.label] = entry.color;
+  });
+
+  function buildSequenceFiles(base, start, end) {
+    const files = [];
+    for (let index = start; index <= end; index += 1) {
+      const suffix = String(index).padStart(3, '0');
+      files.push(`${base}${suffix}.gz`);
+    }
+    return files;
+  }
 
   function trim(value) {
     if (value === undefined || value === null) return '';
@@ -141,8 +166,200 @@
     return USO_COLORS[value] || USO_FALLBACK_COLORS[value] || '#31a354';
   }
 
+  function getDeclividadeEntry(props) {
+    if (!props) return null;
+    const code = trim(getFirstValue(props, DECLIVIDADE_FIELDS));
+    if (!code) return null;
+    const entry = DECLIVIDADE_CLASS_LOOKUP[code];
+    if (!entry) {
+      return {
+        code,
+        label: code,
+        color: '#4b5563'
+      };
+    }
+    return {
+      code,
+      label: entry.label,
+      color: entry.color
+    };
+  }
+
+  function getDeclividadeClass(props) {
+    const entry = getDeclividadeEntry(props);
+    return entry ? entry.label : '';
+  }
+
+  function getDeclividadeColor(value) {
+    if (!value) return '#4b5563';
+    return DECLIVIDADE_LABEL_TO_COLOR[value] || DECLIVIDADE_CLASS_LOOKUP[value]?.color || '#4b5563';
+  }
+
   function makeDataUrl(file) {
     return new URL(file, DATA_BASE_URL).href;
+  }
+
+  const LAYER_CONFIGS = [
+    {
+      key: 'microbacias',
+      manifestKey: 'microbacias_selecionadas__microbacias',
+      name: 'Microbacias (PSH)',
+      type: 'polygon',
+      filesFallback: buildSequenceFiles('microbacias_selecionadas__microbacias.geojson_part-', 1, 1),
+      areaProperty: 'area_ha',
+      legend: {
+        type: 'area-total',
+        title: 'Microbacias',
+        color: '#3498db',
+        includeCount: true
+      },
+      style: (_, { opacity }) => ({
+        color: '#2c3e50',
+        weight: 1,
+        fillColor: '#3498db',
+        fillOpacity: 0.45 * opacity,
+        opacity
+      })
+    },
+    {
+      key: 'uso_solo',
+      manifestKey: 'uso_solo__usodosolo_otto',
+      name: 'Uso do Solo (Ottobacias)',
+      type: 'polygon',
+      filesFallback: buildSequenceFiles('uso_solo__usodosolo_otto.geojson_part-', 2, 16),
+      areaProperty: 'area_ha',
+      legend: {
+        type: 'area-classes',
+        title: 'Uso do Solo',
+        getClass: (_, props) => getUsoClass(props),
+        getColor: value => getUsoColor(value)
+      },
+      style: (feature, { opacity }) => {
+        const props = feature?.properties || {};
+        const value = trim(getUsoClass(props));
+        return {
+          color: '#1f2937',
+          weight: 0.6,
+          fillColor: getUsoColor(value),
+          fillOpacity: 0.6 * opacity,
+          opacity
+        };
+      }
+    },
+    {
+      key: 'uso_app',
+      manifestKey: 'conflitosdeuso__uso_solo_em_app',
+      name: 'Uso do Solo em APP',
+      type: 'polygon',
+      filesFallback: buildSequenceFiles('conflitosdeuso__uso_solo_em_app.geojson_part-', 2, 2),
+      areaProperty: 'area_ha',
+      legend: {
+        type: 'area-classes',
+        title: 'Uso do Solo em APP',
+        getClass: (_, props) => getUsoClass(props),
+        getColor: value => getUsoColor(value)
+      },
+      style: (feature, { opacity }) => {
+        const props = feature?.properties || {};
+        const value = trim(getUsoClass(props));
+        return {
+          color: '#1f2937',
+          weight: 0.6,
+          fillColor: getUsoColor(value),
+          fillOpacity: 0.6 * opacity,
+          opacity
+        };
+      }
+    },
+    {
+      key: 'declividade',
+      manifestKey: 'declividade__declividade_otto',
+      name: 'Declividade (Classes %)',
+      type: 'polygon',
+      filesFallback: buildSequenceFiles('declividade__declividade_otto.geojson_part-', 3, 5),
+      areaProperty: 'AreaHa',
+      legend: {
+        type: 'area-classes',
+        title: 'Declividade (%)',
+        getClass: (_, props) => getDeclividadeClass(props),
+        getColor: value => getDeclividadeColor(value)
+      },
+      style: (feature, { opacity }) => {
+        const props = feature?.properties || {};
+        const entry = getDeclividadeEntry(props);
+        const color = entry?.color || '#4b5563';
+        return {
+          color: '#0f172a',
+          weight: 0.4,
+          fillColor: color,
+          fillOpacity: 0.55 * opacity,
+          opacity: 0.85 * opacity
+        };
+      }
+    },
+    {
+      key: 'curvas_nivel',
+      manifestKey: 'curvasdenivel__curvas_otto',
+      name: 'Curvas de Nível',
+      type: 'line',
+      filesFallback: buildSequenceFiles('curvasdenivel__curvas_otto.geojson_part-', 2, 42),
+      legend: null,
+      style: (_, { opacity }) => ({
+        color: '#5b627a',
+        weight: 0.7,
+        opacity: Math.min(1, Math.max(0.35, opacity * 0.9))
+      })
+    }
+  ];
+
+  async function loadLayerManifest() {
+    try {
+      const response = await fetch(makeDataUrl('layer_manifest.json'), { cache: 'no-store' });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      const data = await response.json();
+      if (!data || typeof data !== 'object') {
+        return null;
+      }
+      return data;
+    } catch (error) {
+      console.warn('Não foi possível carregar o manifest de camadas.', error);
+      return null;
+    }
+  }
+
+  function buildLayerDefinitions(manifest) {
+    const defs = [];
+    const consumedKeys = new Set();
+    LAYER_CONFIGS.forEach(config => {
+      const { filesFallback = [], ...rest } = config;
+      const manifestFiles = manifest && Array.isArray(manifest[config.manifestKey])
+        ? manifest[config.manifestKey]
+        : null;
+      if (manifestFiles) {
+        consumedKeys.add(config.manifestKey);
+      }
+      const files = manifestFiles && manifestFiles.length ? manifestFiles : filesFallback;
+      if (!files || !files.length) return;
+      defs.push({ ...rest, files });
+    });
+    if (manifest) {
+      Object.keys(manifest).forEach(key => {
+        if (consumedKeys.has(key)) return;
+        const files = manifest[key];
+        if (!Array.isArray(files) || !files.length) return;
+        defs.push({
+          key,
+          manifestKey: key,
+          name: key.replace(/_/g, ' '),
+          type: 'polygon',
+          files,
+          legend: null
+        });
+      });
+    }
+    return defs;
   }
 
   async function fetchGeoJsonFile(file) {
@@ -267,7 +484,7 @@
 
   function buildGeoJsonLayer(def, features) {
     const options = {};
-    options.style = feature => getPolygonStyle(def, feature);
+    options.style = feature => getFeatureStyle(def, feature);
     options.onEachFeature = (feature, layer) => {
       const content = createPopupContent(feature);
       if (content) {
@@ -277,103 +494,40 @@
     return L.geoJSON(features, options);
   }
 
-  function getPolygonStyle(def, feature) {
-    const opacity = currentOpacity;
-    switch (def.key) {
-      case 'microbacias':
-        return {
-          color: '#2c3e50',
-          weight: 1.0,
-          fillColor: '#3498db',
-          fillOpacity: 0.45 * opacity,
-          opacity
-        };
-      case 'uso_solo':
-      case 'uso_app': {
-        const props = feature?.properties || {};
-        const value = trim(getUsoClass(props));
-        return {
-          color: '#1f2937',
-          weight: 0.6,
-          fillColor: getUsoColor(value),
-          fillOpacity: 0.6 * opacity,
-          opacity
-        };
+  function getFeatureStyle(def, feature) {
+    const context = { opacity: currentOpacity };
+    if (typeof def.style === 'function') {
+      try {
+        const result = def.style(feature, context);
+        if (result && typeof result === 'object') {
+          return result;
+        }
+      } catch (error) {
+        console.warn(`Falha ao aplicar estilo personalizado da camada ${def.name || def.key}.`, error);
       }
-      default:
-        return {
-          color: '#1f2937',
-          weight: 0.5,
-          fillColor: '#cbd5f5',
-          fillOpacity: 0.5 * opacity,
-          opacity
-        };
+    } else if (def.style && typeof def.style === 'object') {
+      return { ...def.style };
     }
+    if (def.type === 'line') {
+      return {
+        color: '#1f2937',
+        weight: 1,
+        opacity: Math.min(1, Math.max(0.35, currentOpacity))
+      };
+    }
+    return {
+      color: '#1f2937',
+      weight: 0.5,
+      fillColor: '#cbd5f5',
+      fillOpacity: 0.5 * currentOpacity,
+      opacity: currentOpacity
+    };
   }
 
   function legendColorFor(def, feature) {
-    const style = getPolygonStyle(def, feature);
+    const style = getFeatureStyle(def, feature);
     return style.fillColor || style.color || '#1f2937';
   }
-
-  const layerDefs = [
-    {
-      key: 'microbacias',
-      name: 'Microbacias (PSH)',
-      type: 'polygon',
-      files: ['microbacias_selecionadas__microbacias.geojson_part-001.gz'],
-      areaProperty: 'area_ha',
-      legend: {
-        type: 'area-total',
-        title: 'Microbacias',
-        color: '#3498db',
-        includeCount: true
-      }
-    },
-    {
-      key: 'uso_solo',
-      name: 'Uso do Solo (Ottobacias)',
-      type: 'polygon',
-      files: [
-        'uso_solo__usodosolo_otto.geojson_part-001.gz',
-        'uso_solo__usodosolo_otto.geojson_part-002.gz',
-        'uso_solo__usodosolo_otto.geojson_part-003.gz',
-        'uso_solo__usodosolo_otto.geojson_part-004.gz',
-        'uso_solo__usodosolo_otto.geojson_part-005.gz',
-        'uso_solo__usodosolo_otto.geojson_part-006.gz',
-        'uso_solo__usodosolo_otto.geojson_part-007.gz',
-        'uso_solo__usodosolo_otto.geojson_part-008.gz',
-        'uso_solo__usodosolo_otto.geojson_part-009.gz',
-        'uso_solo__usodosolo_otto.geojson_part-010.gz',
-        'uso_solo__usodosolo_otto.geojson_part-011.gz',
-        'uso_solo__usodosolo_otto.geojson_part-012.gz',
-        'uso_solo__usodosolo_otto.geojson_part-013.gz',
-        'uso_solo__usodosolo_otto.geojson_part-014.gz',
-        'uso_solo__usodosolo_otto.geojson_part-015.gz',
-        'uso_solo__usodosolo_otto.geojson_part-016.gz'
-      ],
-      areaProperty: 'area_ha',
-      legend: {
-        type: 'area-classes',
-        title: 'Uso do Solo',
-        getClass: (_, props) => getUsoClass(props),
-        getColor: value => getUsoColor(value)
-      }
-    },
-    {
-      key: 'uso_app',
-      name: 'Uso do Solo em APP',
-      type: 'polygon',
-      files: ['conflitosdeuso__uso_solo_em_app.geojson_part-002.gz'],
-      areaProperty: 'area_ha',
-      legend: {
-        type: 'area-classes',
-        title: 'Uso do Solo em APP',
-        getClass: (_, props) => getUsoClass(props),
-        getColor: value => getUsoColor(value)
-      }
-    }
-  ];
 
   const baseLayers = {
     'CARTO Light': L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png', {
@@ -407,6 +561,7 @@
 
   const stateByKey = new Map();
   const groupLookup = new Map();
+  let layerDefs = [];
 
   const microUi = setupMicroFilterControl();
   let microOptions = [];
@@ -451,24 +606,36 @@
     });
   }
 
-  layerDefs.forEach(def => {
-    const group = L.layerGroup();
-    const state = {
-      def,
-      group,
-      ready: false,
-      loading: false,
-      promise: null,
-      features: [],
-      enriched: [],
-      filtered: [],
-      displayLayer: null,
-      idField: null
-    };
-    stateByKey.set(def.key, state);
-    groupLookup.set(group, def.key);
-    layerControl.addOverlay(group, def.name);
+  bootstrapLayers().catch(error => {
+    console.error('Falha ao inicializar as camadas.', error);
   });
+
+  async function bootstrapLayers() {
+    const manifest = await loadLayerManifest();
+    layerDefs = buildLayerDefinitions(manifest);
+    if (!layerDefs.length) {
+      console.warn('Nenhuma camada configurada disponível para exibição.');
+      return;
+    }
+    layerDefs.forEach(def => {
+      const group = L.layerGroup();
+      const state = {
+        def,
+        group,
+        ready: false,
+        loading: false,
+        promise: null,
+        features: [],
+        enriched: [],
+        filtered: [],
+        displayLayer: null,
+        idField: null
+      };
+      stateByKey.set(def.key, state);
+      groupLookup.set(group, def.key);
+      layerControl.addOverlay(group, def.name || def.key);
+    });
+  }
 
   map.on('overlayadd', event => {
     const key = groupLookup.get(event.layer);
@@ -561,7 +728,7 @@
     state.displayLayer.eachLayer(layer => {
       const feature = layer?.feature;
       if (!feature || typeof layer.setStyle !== 'function') return;
-      layer.setStyle(getPolygonStyle(state.def, feature));
+      layer.setStyle(getFeatureStyle(state.def, feature));
     });
   }
 
