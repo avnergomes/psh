@@ -133,6 +133,18 @@
     return normaliseText(value).replace(/[^a-z0-9]+/g, '');
   }
 
+  function normaliseLayerType(value, fallback = 'polygon') {
+    if (!value) return fallback;
+    const normalized = String(value).trim().toLowerCase();
+    if (['line', 'polyline', 'multiline'].includes(normalized)) {
+      return 'line';
+    }
+    if (['point', 'marker', 'multipoint'].includes(normalized)) {
+      return 'point';
+    }
+    return 'polygon';
+  }
+
   function escapeHtml(value) {
     return String(value)
       .replace(/&/g, '&amp;')
@@ -342,33 +354,64 @@
     }
   }
 
+  function normaliseManifestEntry(rawEntry) {
+    if (!rawEntry) {
+      return { files: [], type: null, name: null, description: null };
+    }
+    if (Array.isArray(rawEntry)) {
+      return { files: rawEntry.filter(Boolean), type: null, name: null, description: null };
+    }
+    if (typeof rawEntry === 'object') {
+      const files = Array.isArray(rawEntry.files) ? rawEntry.files.filter(Boolean) : [];
+      const type = rawEntry.type ? normaliseLayerType(rawEntry.type) : null;
+      const name = rawEntry.name || rawEntry.title || null;
+      const description = rawEntry.description || null;
+      return { files, type, name, description };
+    }
+    return { files: [], type: null, name: null, description: null };
+  }
+
   function buildLayerDefinitions(manifest) {
     const defs = [];
     const consumedKeys = new Set();
     LAYER_CONFIGS.forEach(config => {
       const { filesFallback = [], ...rest } = config;
-      const manifestFiles = manifest && Array.isArray(manifest[config.manifestKey])
-        ? manifest[config.manifestKey]
-        : null;
-      if (manifestFiles) {
+      const hasManifestEntry = manifest && Object.prototype.hasOwnProperty.call(manifest, config.manifestKey);
+      const manifestEntry = hasManifestEntry ? normaliseManifestEntry(manifest[config.manifestKey]) : null;
+      if (hasManifestEntry) {
         consumedKeys.add(config.manifestKey);
       }
-      const files = manifestFiles && manifestFiles.length ? manifestFiles : filesFallback;
+      const files = manifestEntry && manifestEntry.files.length ? manifestEntry.files : filesFallback;
       if (!files || !files.length) return;
-      defs.push({ ...rest, files });
+      const nextType = manifestEntry?.type || rest.type || 'polygon';
+      const nextName = manifestEntry?.name || rest.name || rest.key || config.key;
+      const description = manifestEntry?.description || rest.description || null;
+      defs.push({
+        ...rest,
+        type: normaliseLayerType(nextType, rest.type || 'polygon'),
+        name: nextName,
+        description,
+        files
+      });
     });
     if (manifest) {
-      Object.keys(manifest).forEach(key => {
+      Object.entries(manifest).forEach(([key, rawEntry]) => {
         if (consumedKeys.has(key)) return;
-        const files = manifest[key];
-        if (!Array.isArray(files) || !files.length) return;
+        const entry = normaliseManifestEntry(rawEntry);
+        if (!entry.files.length) return;
+        const fallbackName = key
+          .replace(/__/g, ' • ')
+          .replace(/_/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim();
         defs.push({
           key,
           manifestKey: key,
-          name: key.replace(/_/g, ' '),
-          type: 'polygon',
-          files,
-          legend: null
+          name: entry.name || fallbackName || key,
+          type: normaliseLayerType(entry.type, 'polygon'),
+          files: entry.files,
+          legend: null,
+          description: entry.description || null
         });
       });
     }
@@ -467,6 +510,31 @@
     return null;
   }
 
+  function findFieldWithValues(features, candidates) {
+    if (!features || !features.length || !candidates || !candidates.length) {
+      return null;
+    }
+    let fallbackKey = null;
+    for (const candidate of candidates) {
+      if (!candidate) continue;
+      let resolvedKey = null;
+      for (const feature of features) {
+        const props = feature?.properties;
+        if (!props) continue;
+        const key = findField(props, [candidate]);
+        if (!key) continue;
+        resolvedKey = key;
+        if (trim(props[key])) {
+          return key;
+        }
+      }
+      if (resolvedKey && !fallbackKey) {
+        fallbackKey = resolvedKey;
+      }
+    }
+    return fallbackKey;
+  }
+
   function enrichFeature(def, feature, idField) {
     const props = feature?.properties || {};
     const id = idField ? trim(props[idField]) : '';
@@ -516,7 +584,11 @@
 
   function buildGeoJsonLayer(def, features) {
     const options = {};
-    options.style = feature => getFeatureStyle(def, feature);
+    if (def.type === 'point') {
+      options.pointToLayer = (feature, latlng) => L.circleMarker(latlng, getFeatureStyle(def, feature));
+    } else {
+      options.style = feature => getFeatureStyle(def, feature);
+    }
     options.onEachFeature = (feature, layer) => {
       const content = createPopupContent(feature);
       if (content) {
@@ -540,11 +612,22 @@
     } else if (def.style && typeof def.style === 'object') {
       return { ...def.style };
     }
+    const adjustedOpacity = Math.min(1, Math.max(0.35, currentOpacity));
+    if (def.type === 'point') {
+      return {
+        radius: 6,
+        color: '#1f2937',
+        weight: 1,
+        fillColor: '#2563eb',
+        fillOpacity: adjustedOpacity,
+        opacity: adjustedOpacity
+      };
+    }
     if (def.type === 'line') {
       return {
         color: '#1f2937',
         weight: 1,
-        opacity: Math.min(1, Math.max(0.35, currentOpacity))
+        opacity: adjustedOpacity
       };
     }
     return {
@@ -780,7 +863,8 @@
       }
       state.features = collected;
       const sampleProps = collected.find(item => item && item.properties)?.properties || null;
-      const idField = sampleProps ? findField(sampleProps, ID_FIELD_CANDIDATES) : null;
+      const idField = findFieldWithValues(collected, ID_FIELD_CANDIDATES)
+        || (sampleProps ? findField(sampleProps, ID_FIELD_CANDIDATES) : null);
       state.idField = idField;
       state.enriched = collected.map(feature => enrichFeature(state.def, feature, idField));
       state.ready = true;
