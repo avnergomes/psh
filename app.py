@@ -122,7 +122,7 @@ LAYER_CONFIG = [
         "simplify": 0.0003,
     },
     {
-        "label": "Uso do Solo em APP",
+        "label": "Conflito de Uso",
         "pattern": "data/conflitosdeuso__uso_solo_em_app.geojson_part-*.gz",
         "rename": {
             "Nivel_I": "NIVEL_I",

@@ -3,6 +3,7 @@
 
   const turf = window.turf || null;
   const pako = window.pako || null;
+  const MicroAggregation = window.MicroAggregation || null;
 
   function resolveAppBaseUrl() {
     try {
@@ -272,15 +273,15 @@
       }
     },
     {
-      key: 'uso_app',
+      key: 'conflito_uso',
       manifestKey: 'conflitosdeuso__uso_solo_em_app',
-      name: 'Uso do Solo em APP',
+      name: 'Conflito de Uso',
       type: 'polygon',
       filesFallback: buildSequenceFiles('conflitosdeuso__uso_solo_em_app.geojson_part-', 2, 2),
       areaProperty: 'area_ha',
       legend: {
         type: 'area-classes',
-        title: 'Uso do Solo em APP',
+        title: 'Conflito de Uso',
         getClass: (_, props) => getUsoClass(props),
         getColor: value => getUsoColor(value)
       },
@@ -582,12 +583,13 @@
     return pieces.join('');
   }
 
-  function buildGeoJsonLayer(def, features) {
+  function buildGeoJsonLayer(def, features, opacity) {
+    const effectiveOpacity = Number.isFinite(opacity) ? opacity : defaultOpacity;
     const options = {};
     if (def.type === 'point') {
-      options.pointToLayer = (feature, latlng) => L.circleMarker(latlng, getFeatureStyle(def, feature));
+      options.pointToLayer = (feature, latlng) => L.circleMarker(latlng, getFeatureStyle(def, feature, effectiveOpacity));
     } else {
-      options.style = feature => getFeatureStyle(def, feature);
+      options.style = feature => getFeatureStyle(def, feature, effectiveOpacity);
     }
     options.onEachFeature = (feature, layer) => {
       const content = createPopupContent(feature);
@@ -598,8 +600,9 @@
     return L.geoJSON(features, options);
   }
 
-  function getFeatureStyle(def, feature) {
-    const context = { opacity: currentOpacity };
+  function getFeatureStyle(def, feature, opacity = defaultOpacity) {
+    const safeOpacity = Math.min(1, Math.max(0.1, Number.isFinite(opacity) ? opacity : defaultOpacity));
+    const context = { opacity: safeOpacity };
     if (typeof def.style === 'function') {
       try {
         const result = def.style(feature, context);
@@ -612,7 +615,7 @@
     } else if (def.style && typeof def.style === 'object') {
       return { ...def.style };
     }
-    const adjustedOpacity = Math.min(1, Math.max(0.35, currentOpacity));
+    const adjustedOpacity = Math.min(1, Math.max(0.1, safeOpacity));
     if (def.type === 'point') {
       return {
         radius: 6,
@@ -634,8 +637,8 @@
       color: '#1f2937',
       weight: 0.5,
       fillColor: '#cbd5f5',
-      fillOpacity: 0.5 * currentOpacity,
-      opacity: currentOpacity
+      fillOpacity: 0.5 * safeOpacity,
+      opacity: safeOpacity
     };
   }
 
@@ -644,23 +647,45 @@
     return style.fillColor || style.color || '#1f2937';
   }
 
+  const layerCartoLight = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap • © CARTO'
+  });
+  const layerCartoDark = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap • © CARTO'
+  });
+  const layerOsm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap colaboradores'
+  });
+  const layerEsri = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+    attribution: 'Imagens © Esri & partners'
+  });
+  const layerTopo = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap contributors • © OpenTopoMap'
+  });
+
   const baseLayers = {
-    'CARTO Light': L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png', {
-      attribution: '© OpenStreetMap • © CARTO'
-    }),
-    'OSM Padrão': L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '© OpenStreetMap colaboradores'
-    }),
-    'Esri Imagery': L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-      attribution: 'Imagens © Esri & partners'
-    })
+    'Tema Claro (CARTO)': layerCartoLight,
+    'Tema Escuro (CARTO)': layerCartoDark,
+    'OSM Padrão': layerOsm,
+    'Satélite (Esri)': layerEsri,
+    'Topográfico (OTM)': layerTopo
   };
+
+  const themeLayers = {
+    light: layerCartoLight,
+    dark: layerCartoDark,
+    streets: layerOsm,
+    satellite: layerEsri,
+    terrain: layerTopo
+  };
+
+  let activeBaseLayer = themeLayers.light;
 
   const map = L.map('map', {
     center: [-24.5, -51.5],
     zoom: 7,
     preferCanvas: true,
-    layers: [baseLayers['CARTO Light']]
+    layers: [activeBaseLayer]
   });
 
   const layerControl = L.control.layers(baseLayers, {}, {
@@ -677,31 +702,70 @@
   const stateByKey = new Map();
   const groupLookup = new Map();
   let layerDefs = [];
+  let overlayOrder = [];
 
   const microUi = setupMicroFilterControl();
-  let microOptions = [];
+  const overlayUi = setupOverlayManager({
+    onToggle: handleOverlayToggle,
+    onOpacityChange: handleLayerOpacityChange,
+    onReorder: handleLayerReorder
+  });
+
+  const microState = {
+    hierarchy: { groups: [], idLookup: new Map(), allIds: [] },
+    collapsed: new Map(),
+    rows: [],
+    offsets: [],
+    totalHeight: 0,
+    virtualizationScheduled: false
+  };
+  const MICRO_GROUP_HEIGHT = 52;
+  const MICRO_OTTO_HEIGHT = 44;
   const allMicroIds = new Set();
   let activeIds = new Set();
   let microOptionsReady = false;
+  let searchQuery = '';
 
-  let currentOpacity = 0.7;
+  let defaultOpacity = 0.7;
   const opacityInput = document.getElementById('opacity');
   const opacityValue = document.getElementById('opacityVal');
   if (opacityInput) {
     const initial = Number(opacityInput.value || 70);
     const clamped = Math.min(100, Math.max(20, Number.isFinite(initial) ? initial : 70));
-    currentOpacity = clamped / 100;
+    defaultOpacity = clamped / 100;
     if (opacityValue) {
       opacityValue.textContent = `${clamped}%`;
     }
     opacityInput.addEventListener('input', event => {
       const raw = Number(event.target.value);
       const next = Math.min(100, Math.max(20, Number.isFinite(raw) ? raw : 70));
-      currentOpacity = next / 100;
+      defaultOpacity = next / 100;
       if (opacityValue) {
         opacityValue.textContent = `${next}%`;
       }
-      stateByKey.forEach(updateLayerOpacity);
+      stateByKey.forEach(state => {
+        if (state.customOpacity) return;
+        state.opacity = defaultOpacity;
+        overlayUi.updateLayer(state.def.key, { opacity: state.opacity });
+        updateLayerOpacity(state);
+      });
+    });
+  }
+
+  const themeSelect = document.getElementById('themePreset');
+  if (themeSelect) {
+    if (!themeSelect.value) {
+      themeSelect.value = 'light';
+    }
+    themeSelect.addEventListener('change', event => {
+      const selected = event.target.value;
+      const nextLayer = themeLayers[selected] || themeLayers.light;
+      if (nextLayer === activeBaseLayer) return;
+      if (activeBaseLayer && map.hasLayer(activeBaseLayer)) {
+        map.removeLayer(activeBaseLayer);
+      }
+      map.addLayer(nextLayer);
+      activeBaseLayer = nextLayer;
     });
   }
 
@@ -732,6 +796,8 @@
       console.warn('Nenhuma camada configurada disponível para exibição.');
       return;
     }
+    const overlayItems = [];
+    const defaultActive = new Set(['microbacias']);
     layerDefs.forEach(def => {
       const group = L.layerGroup();
       const state = {
@@ -744,44 +810,79 @@
         enriched: [],
         filtered: [],
         displayLayer: null,
-        idField: null
+        idField: null,
+        opacity: defaultOpacity,
+        customOpacity: false
       };
       stateByKey.set(def.key, state);
       groupLookup.set(group, def.key);
-      layerControl.addOverlay(group, def.name || def.key);
+      overlayItems.push({
+        key: def.key,
+        name: def.name || def.key,
+        description: def.description || null,
+        legend: def.legend || null
+      });
+    });
+    overlayUi.setLayers(overlayItems, {
+      defaultActive,
+      defaultOpacity
+    });
+    overlayOrder = overlayUi.getOrder();
+    defaultActive.forEach(key => {
+      handleOverlayToggle(key, true);
     });
   }
 
   map.on('overlayadd', event => {
     const key = groupLookup.get(event.layer);
     if (!key) return;
-    const state = stateByKey.get(key);
-    if (!state) return;
-    if (!state.ready) {
-      loadLayer(state).then(() => {
-        applyFilters();
-      }).catch(error => {
-        console.error(`Falha ao carregar a camada ${state.def.name}`, error);
-      });
-    } else {
-      applyFilters();
-    }
+    overlayUi.updateLayer(key, { active: true, loading: false });
+    applyFilters();
   });
 
   map.on('overlayremove', event => {
-    if (!groupLookup.has(event.layer)) return;
+    const key = groupLookup.get(event.layer);
+    if (!key) return;
+    overlayUi.updateLayer(key, { active: false, loading: false });
     updateLegendDock();
   });
 
   if (microUi.search) {
     microUi.search.addEventListener('input', () => {
-      renderMicroList();
+      searchQuery = microUi.search.value || '';
+      rebuildMicroRows();
+      renderMicroList({ resetScroll: true });
+      updateAutocomplete();
+    });
+    microUi.search.addEventListener('focus', () => {
+      updateAutocomplete();
+    });
+    microUi.search.addEventListener('blur', () => {
+      setTimeout(() => {
+        if (microUi.autocomplete) {
+          microUi.autocomplete.hidden = true;
+        }
+      }, 120);
+    });
+  }
+
+  if (microUi.listViewport) {
+    microUi.listViewport.addEventListener('scroll', () => {
+      if (!microOptionsReady || microState.virtualizationScheduled) return;
+      microState.virtualizationScheduled = true;
+      const scheduler = typeof window.requestAnimationFrame === 'function'
+        ? window.requestAnimationFrame.bind(window)
+        : handler => window.setTimeout(handler, 16);
+      scheduler(() => {
+        microState.virtualizationScheduled = false;
+        renderMicroList();
+      });
     });
   }
 
   if (microUi.selectAll) {
     microUi.selectAll.addEventListener('click', () => {
-      if (!microOptions.length) return;
+      if (!microOptionsReady) return;
       activeIds = new Set(allMicroIds);
       updateMicroSummary();
       renderMicroList();
@@ -791,6 +892,7 @@
 
   if (microUi.clear) {
     microUi.clear.addEventListener('click', () => {
+      if (!microOptionsReady) return;
       activeIds = new Set();
       updateMicroSummary();
       renderMicroList();
@@ -799,10 +901,10 @@
   }
 
   function getEffectiveIds() {
-    if (!microOptionsReady || !microOptions.length) return null;
+    if (!microOptionsReady || !microState.hierarchy.allIds.length) return null;
     if (!activeIds) return null;
     if (activeIds.size === 0) return new Set();
-    if (activeIds.size >= microOptions.length) return null;
+    if (activeIds.size >= microState.hierarchy.allIds.length) return null;
     return activeIds;
   }
 
@@ -818,7 +920,7 @@
       state.group.clearLayers();
       if (filteredItems.length) {
         const features = filteredItems.map(item => item.feature);
-        const layer = buildGeoJsonLayer(def, features);
+        const layer = buildGeoJsonLayer(def, features, state.opacity ?? defaultOpacity);
         state.group.addLayer(layer);
         state.displayLayer = layer;
         updateLayerOpacity(state);
@@ -826,11 +928,12 @@
         state.displayLayer = null;
       }
     });
+    applyOverlayOrder();
     updateLegendDock();
     if (options.fitToMicro) {
-      const microState = stateByKey.get('microbacias');
-      if (microState && microState.displayLayer) {
-        const bounds = microState.displayLayer.getBounds?.();
+      const microStateEntry = stateByKey.get('microbacias');
+      if (microStateEntry && microStateEntry.displayLayer) {
+        const bounds = microStateEntry.displayLayer.getBounds?.();
         if (bounds && bounds.isValid && bounds.isValid()) {
           map.fitBounds(bounds.pad(0.08));
         }
@@ -840,10 +943,11 @@
 
   function updateLayerOpacity(state) {
     if (!state.displayLayer) return;
+    const effectiveOpacity = Number.isFinite(state.opacity) ? state.opacity : defaultOpacity;
     state.displayLayer.eachLayer(layer => {
       const feature = layer?.feature;
       if (!feature || typeof layer.setStyle !== 'function') return;
-      layer.setStyle(getFeatureStyle(state.def, feature));
+      layer.setStyle(getFeatureStyle(state.def, feature, effectiveOpacity));
     });
   }
 
@@ -879,41 +983,58 @@
   }
 
   function prepareMicroOptions(enriched) {
-    const mapById = new Map();
+    if (!MicroAggregation || typeof MicroAggregation.buildRiverHierarchy !== 'function') {
+      console.warn('Não foi possível inicializar o agrupamento hierárquico de microbacias.');
+      return;
+    }
+    const merged = new Map();
     enriched.forEach(entry => {
-      const { feature, id } = entry;
+      const { feature, id, areaHa } = entry || {};
       const props = feature?.properties || {};
-      const riverName = trim(id || getFirstValue(props, MICRO_RIVER_FIELDS));
-      const fallbackId = trim(getFirstValue(props, MICRO_ID_FALLBACK_FIELDS));
-      const optionId = riverName || fallbackId;
-      if (!optionId || mapById.has(optionId)) return;
-      const bacia = trim(getFirstValue(props, MICRO_BACIA_FIELDS));
+      const fallbackId = trim(getFirstValue(props, MICRO_ID_FALLBACK_FIELDS)) || trim(id);
+      const ottoId = fallbackId || trim(id);
+      if (!ottoId) return;
+      const rawRiver = trim(getFirstValue(props, MICRO_RIVER_FIELDS));
       const manancial = trim(getFirstValue(props, MICRO_MANANCIAL_FIELDS));
-      const subtitleParts = [];
-      if (fallbackId && fallbackId !== optionId) {
-        subtitleParts.push(`Ottobacia ${fallbackId}`);
+      const bacia = trim(getFirstValue(props, MICRO_BACIA_FIELDS));
+      const riverFull = rawRiver || manancial || ottoId;
+      const label = `Ottobacia ${ottoId}`;
+      const fullLabel = manancial && manancial !== riverFull ? `${label} • ${manancial}` : label;
+      const searchExtras = `${ottoId} ${riverFull} ${bacia} ${manancial} ${id}`;
+      const existing = merged.get(ottoId);
+      if (!existing) {
+        merged.set(ottoId, {
+          id: ottoId,
+          riverRaw: rawRiver || riverFull,
+          riverFull,
+          areaHa: areaHa || 0,
+          label,
+          fullLabel,
+          metadata: { bacia, manancial, fallbackId, rawId: id },
+          searchExtras
+        });
+      } else {
+        existing.areaHa = Math.max(existing.areaHa || 0, areaHa || 0);
+        if (!existing.riverRaw && rawRiver) {
+          existing.riverRaw = rawRiver;
+        }
+        existing.searchExtras = `${existing.searchExtras || ''} ${searchExtras}`.trim();
       }
-      if (bacia) subtitleParts.push(bacia);
-      if (manancial && manancial !== riverName) subtitleParts.push(manancial);
-      const title = riverName || (fallbackId ? `Ottobacia ${fallbackId}` : optionId);
-      mapById.set(optionId, {
-        id: optionId,
-        title,
-        subtitle: subtitleParts.join(' • '),
-        search: normaliseText(`${optionId} ${riverName} ${fallbackId} ${bacia} ${manancial}`)
-      });
     });
-    microOptions = Array.from(mapById.values()).sort((a, b) => a.title.localeCompare(b.title, 'pt-BR'));
+    const entries = Array.from(merged.values());
+    microState.hierarchy = MicroAggregation.buildRiverHierarchy(entries);
+    microState.collapsed = new Map();
+    microState.hierarchy.groups.forEach((group, index) => {
+      microState.collapsed.set(group.key, index >= 3);
+    });
     allMicroIds.clear();
-    microOptions.forEach(option => allMicroIds.add(option.id));
+    microState.hierarchy.allIds.forEach(idValue => allMicroIds.add(idValue));
     activeIds = new Set(allMicroIds);
     microOptionsReady = true;
-    refreshMicroUi();
-  }
-
-  function refreshMicroUi() {
     updateMicroSummary();
-    renderMicroList();
+    rebuildMicroRows();
+    renderMicroList({ resetScroll: true });
+    updateAutocomplete();
   }
 
   function updateMicroSummary() {
@@ -923,76 +1044,232 @@
       microUi.summary.classList.add('muted');
       return;
     }
-    if (!microOptions.length) {
-      microUi.summary.textContent = 'Nenhuma microbacia disponível.';
+    const totalRios = microState.hierarchy.groups.length;
+    const totalOttos = allMicroIds.size;
+    const selected = activeIds ? activeIds.size : 0;
+    if (!totalOttos) {
+      microUi.summary.textContent = 'Nenhuma ottobacia disponível.';
       microUi.summary.classList.add('muted');
       return;
     }
-    const total = allMicroIds.size || microOptions.length;
-    const selected = activeIds ? activeIds.size : 0;
+    microUi.summary.classList.remove('muted');
     if (!selected) {
-      microUi.summary.textContent = 'Nenhuma microbacia selecionada.';
-      microUi.summary.classList.remove('muted');
-    } else if (selected >= total) {
-      microUi.summary.textContent = `Todas as ${microOptions.length} microbacias selecionadas.`;
-      microUi.summary.classList.remove('muted');
+      microUi.summary.textContent = `Nenhuma ottobacia selecionada em ${totalRios} rios.`;
+    } else if (selected >= totalOttos) {
+      microUi.summary.textContent = `Todas as ${totalOttos} ottobacias (${totalRios} rios) selecionadas.`;
     } else {
-      microUi.summary.textContent = `${selected} de ${microOptions.length} microbacias selecionadas.`;
-      microUi.summary.classList.remove('muted');
+      microUi.summary.textContent = `${selected} de ${totalOttos} ottobacias em ${totalRios} rios.`;
     }
   }
 
-  function renderMicroList() {
-    if (!microUi.list) return;
-    microUi.list.innerHTML = '';
-    const fragment = document.createDocumentFragment();
-    const query = microUi.search ? normaliseText(microUi.search.value) : '';
-    let rendered = 0;
-    if (!microOptionsReady) {
-      const info = document.createElement('div');
-      info.className = 'micro-empty muted';
-      info.textContent = 'Carregando microbacias…';
-      fragment.appendChild(info);
-    } else {
-      microOptions.forEach(option => {
-        if (query && !option.search.includes(query)) return;
-        rendered += 1;
-        const label = document.createElement('label');
-        label.className = 'micro-option';
-        const input = document.createElement('input');
-        input.type = 'checkbox';
-        input.value = option.id;
-        input.checked = activeIds.size ? activeIds.has(option.id) : false;
-        input.addEventListener('change', event => {
-          handleOptionToggle(option.id, event.target.checked);
-        });
-        const text = document.createElement('div');
-        text.className = 'micro-option-text';
-        const title = document.createElement('div');
-        title.className = 'micro-option-title';
-        title.textContent = option.title;
-        text.appendChild(title);
-        if (option.subtitle) {
-          const subtitle = document.createElement('div');
-          subtitle.className = 'micro-option-sub';
-          subtitle.textContent = option.subtitle;
-          text.appendChild(subtitle);
-        }
-        label.appendChild(input);
-        label.appendChild(text);
-        fragment.appendChild(label);
+  function rebuildMicroRows() {
+    microState.rows = [];
+    microState.offsets = [];
+    microState.totalHeight = 0;
+    if (!microOptionsReady) return;
+    const normalizedQuery = normaliseText(searchQuery);
+    const rows = [];
+    microState.hierarchy.groups.forEach(group => {
+      const groupMatches = !normalizedQuery || (group.search && group.search.includes(normalizedQuery));
+      const ottoMatches = !normalizedQuery
+        ? group.ottobacias
+        : group.ottobacias.filter(otto => otto.search && otto.search.includes(normalizedQuery));
+      if (!groupMatches && !ottoMatches.length) return;
+      const collapsed = normalizedQuery ? false : microState.collapsed.get(group.key) !== false;
+      rows.push({
+        type: 'group',
+        key: group.key,
+        group,
+        collapsed,
+        height: MICRO_GROUP_HEIGHT
       });
-    }
-    if (microOptionsReady && rendered === 0) {
-      const empty = document.createElement('div');
-      empty.className = 'micro-empty muted';
-      empty.textContent = query ? 'Nenhuma microbacia corresponde à busca.' : 'Nenhuma microbacia disponível.';
-      fragment.appendChild(empty);
-    }
-    microUi.list.appendChild(fragment);
+      const children = collapsed && !normalizedQuery ? [] : ottoMatches;
+      children.forEach(otto => {
+        rows.push({
+          type: 'otto',
+          key: `${group.key}:${otto.id}`,
+          id: otto.id,
+          group,
+          otto,
+          height: MICRO_OTTO_HEIGHT
+        });
+      });
+    });
+    microState.rows = rows;
+    const offsets = [];
+    let acc = 0;
+    rows.forEach(row => {
+      offsets.push(acc);
+      acc += row.height;
+    });
+    microState.offsets = offsets;
+    microState.totalHeight = acc;
   }
 
-  function handleOptionToggle(id, checked) {
+  function findRowIndex(position) {
+    const offsets = microState.offsets;
+    if (!offsets.length || position <= 0) return 0;
+    let low = 0;
+    let high = offsets.length - 1;
+    while (low <= high) {
+      const mid = Math.floor((low + high) / 2);
+      const value = offsets[mid];
+      if (value === position) return mid;
+      if (value < position) {
+        low = mid + 1;
+      } else {
+        high = mid - 1;
+      }
+    }
+    return Math.max(0, low - 1);
+  }
+
+  function renderMicroList(options = {}) {
+    if (!microUi.listInner) return;
+    if (options.resetScroll && microUi.listViewport) {
+      microUi.listViewport.scrollTop = 0;
+    }
+    if (!microOptionsReady) {
+      microUi.listInner.style.height = 'auto';
+      microUi.listInner.innerHTML = '<div class="micro-empty muted">Carregando microbacias…</div>';
+      return;
+    }
+    if (!microState.rows.length) {
+      microUi.listInner.style.height = 'auto';
+      microUi.listInner.innerHTML = '<div class="micro-empty muted">Nenhum resultado para o filtro atual.</div>';
+      return;
+    }
+    const viewport = microUi.listViewport;
+    const scrollTop = viewport ? viewport.scrollTop : 0;
+    const viewportHeight = viewport ? viewport.clientHeight : microState.totalHeight;
+    const startIndex = findRowIndex(scrollTop);
+    const endIndex = findRowIndex(scrollTop + viewportHeight);
+    const buffer = 6;
+    const from = Math.max(0, startIndex - buffer);
+    const to = Math.min(microState.rows.length, endIndex + buffer);
+    const fragment = document.createDocumentFragment();
+    for (let index = from; index < to; index += 1) {
+      const row = microState.rows[index];
+      const top = microState.offsets[index];
+      fragment.appendChild(buildMicroRowElement(row, top));
+    }
+    microUi.listInner.style.height = `${microState.totalHeight}px`;
+    microUi.listInner.replaceChildren(fragment);
+  }
+
+  function buildMicroRowElement(row, top) {
+    if (row.type === 'group') {
+      return createGroupRow(row, top);
+    }
+    return createOttoRow(row, top);
+  }
+
+  function createGroupRow(row, top) {
+    const group = row.group;
+    const stats = getGroupSelectionStats(group);
+    const element = document.createElement('div');
+    element.className = 'micro-row micro-group';
+    element.style.position = 'absolute';
+    element.style.transform = `translateY(${top}px)`;
+    element.style.height = `${row.height}px`;
+
+    const expander = document.createElement('button');
+    expander.type = 'button';
+    expander.className = row.collapsed ? 'micro-toggle collapsed' : 'micro-toggle';
+    expander.title = row.collapsed ? 'Expandir ottobacias do rio' : 'Recolher ottobacias do rio';
+    expander.addEventListener('click', () => {
+      const current = microState.collapsed.get(group.key) !== false;
+      microState.collapsed.set(group.key, !current);
+      rebuildMicroRows();
+      renderMicroList();
+    });
+
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.checked = stats.selected === stats.total && stats.total > 0;
+    checkbox.indeterminate = stats.selected > 0 && stats.selected < stats.total;
+    checkbox.addEventListener('change', event => {
+      handleGroupToggle(group, event.target.checked);
+    });
+
+    const info = document.createElement('div');
+    info.className = 'micro-group-info';
+    const title = document.createElement('span');
+    title.className = 'micro-group-name';
+    title.textContent = group.name || group.fullName;
+    if (group.fullName && group.fullName !== group.name) {
+      title.title = group.fullName;
+    }
+    const meta = document.createElement('span');
+    meta.className = 'micro-group-meta';
+    meta.textContent = `${stats.selected}/${stats.total} • ${fmt.ha(group.totalArea)} ha`;
+
+    info.appendChild(title);
+    info.appendChild(meta);
+
+    element.append(expander, checkbox, info);
+    return element;
+  }
+
+  function createOttoRow(row, top) {
+    const { otto, group } = row;
+    const element = document.createElement('div');
+    element.className = 'micro-row micro-otto';
+    element.style.position = 'absolute';
+    element.style.transform = `translateY(${top}px)`;
+    element.style.height = `${row.height}px`;
+
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.checked = activeIds.has(otto.id);
+    checkbox.addEventListener('change', event => {
+      handleOttoToggle(otto.id, event.target.checked);
+    });
+
+    const info = document.createElement('div');
+    info.className = 'micro-otto-info';
+    const name = document.createElement('span');
+    name.className = 'micro-otto-name';
+    name.textContent = otto.label;
+    name.title = otto.fullLabel || otto.label;
+    const chip = document.createElement('span');
+    chip.className = 'micro-chip';
+    chip.textContent = `${fmt.ha(otto.areaHa)} ha`;
+    chip.title = `Área estimada da ottobacia no rio ${group.name}`;
+
+    info.append(name, chip);
+    element.append(checkbox, info);
+    return element;
+  }
+
+  function getGroupSelectionStats(group) {
+    const total = group.ottobacias.length;
+    let selected = 0;
+    group.ottobacias.forEach(otto => {
+      if (activeIds.has(otto.id)) {
+        selected += 1;
+      }
+    });
+    return { total, selected };
+  }
+
+  function handleGroupToggle(group, checked) {
+    if (!group) return;
+    const next = new Set(activeIds);
+    group.ottobacias.forEach(otto => {
+      if (checked) {
+        next.add(otto.id);
+      } else {
+        next.delete(otto.id);
+      }
+    });
+    activeIds = next;
+    updateMicroSummary();
+    renderMicroList();
+    applyFilters({ fitToMicro: true });
+  }
+
+  function handleOttoToggle(id, checked) {
     if (!id) return;
     const next = new Set(activeIds);
     if (checked) {
@@ -1003,6 +1280,79 @@
     activeIds = next;
     updateMicroSummary();
     applyFilters({ fitToMicro: true });
+    renderMicroList();
+  }
+
+  function scrollToGroup(key) {
+    if (!microUi.listViewport) return;
+    const index = microState.rows.findIndex(row => row.type === 'group' && row.group.key === key);
+    if (index < 0) return;
+    microUi.listViewport.scrollTop = microState.offsets[index] || 0;
+  }
+
+  function scrollToOtto(groupKey, id) {
+    if (!microUi.listViewport) return;
+    const index = microState.rows.findIndex(row => row.type === 'otto' && row.group.key === groupKey && row.id === id);
+    if (index < 0) return;
+    const offset = microState.offsets[index] || 0;
+    microUi.listViewport.scrollTop = Math.max(0, offset - MICRO_GROUP_HEIGHT);
+  }
+
+  function updateAutocomplete() {
+    if (!microUi.autocomplete) return;
+    const queryRaw = microUi.search ? microUi.search.value : '';
+    const query = normaliseText(queryRaw);
+    microUi.autocomplete.innerHTML = '';
+    if (!query || !microOptionsReady) {
+      microUi.autocomplete.hidden = true;
+      return;
+    }
+    const suggestions = [];
+    const seen = new Set();
+    microState.hierarchy.groups.forEach(group => {
+      if (group.search && group.search.includes(query) && !seen.has(`river:${group.key}`)) {
+        suggestions.push({ type: 'river', key: group.key, label: group.name, full: group.fullName });
+        seen.add(`river:${group.key}`);
+      }
+      group.ottobacias.forEach(otto => {
+        if (!otto.search || !otto.search.includes(query)) return;
+        if (seen.has(`otto:${otto.id}`)) return;
+        suggestions.push({ type: 'otto', key: otto.id, label: otto.label, full: otto.fullLabel, groupKey: group.key });
+        seen.add(`otto:${otto.id}`);
+      });
+    });
+    if (!suggestions.length) {
+      microUi.autocomplete.hidden = true;
+      return;
+    }
+    suggestions.slice(0, 8).forEach(item => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'micro-suggestion';
+      button.textContent = item.type === 'river' ? `🌊 ${item.label}` : `🗺️ ${item.label}`;
+      button.title = item.full || item.label;
+      button.addEventListener('mousedown', event => event.preventDefault());
+      button.addEventListener('click', () => {
+        if (!microUi.search) return;
+        microUi.search.value = item.label;
+        searchQuery = microUi.search.value;
+        if (item.type === 'river') {
+          microState.collapsed.set(item.key, false);
+          rebuildMicroRows();
+          renderMicroList({ resetScroll: true });
+          scrollToGroup(item.key);
+        } else {
+          microState.collapsed.set(item.groupKey, false);
+          rebuildMicroRows();
+          renderMicroList({ resetScroll: false });
+          scrollToOtto(item.groupKey, item.key);
+        }
+        updateAutocomplete();
+        microUi.search.focus();
+      });
+      microUi.autocomplete.appendChild(button);
+    });
+    microUi.autocomplete.hidden = false;
   }
 
   function setupMicroFilterControl() {
@@ -1016,15 +1366,22 @@
               <h2>Microbacias</h2>
               <p class="micro-summary muted" data-role="summary">Carregando microbacias…</p>
             </div>
+            <button type="button" class="micro-info" data-role="info" title="Selecione rios completos ou ottobacias específicas.">ℹ️</button>
           </div>
           <div class="micro-actions">
-            <input type="search" class="micro-search" placeholder="Buscar por rio, bacia ou ID" data-role="search" />
+            <div class="micro-search-wrapper">
+              <span class="micro-search-icon" aria-hidden="true">🔍</span>
+              <input type="search" class="micro-search" placeholder="Buscar por nome do rio ou ottobacia" data-role="search" />
+            </div>
+            <div class="micro-autocomplete" data-role="autocomplete" hidden></div>
             <div class="micro-buttons">
               <button type="button" class="btn-chip" data-action="select-all">Selecionar todas</button>
               <button type="button" class="btn-chip" data-action="clear">Limpar seleção</button>
             </div>
           </div>
-          <div class="micro-list" data-role="list"></div>
+          <div class="micro-list-viewport" data-role="list-viewport">
+            <div class="micro-list-inner" data-role="list"></div>
+          </div>
         `;
         L.DomEvent.disableClickPropagation(container);
         L.DomEvent.disableScrollPropagation(container);
@@ -1038,10 +1395,251 @@
       container,
       summary: container.querySelector('[data-role="summary"]'),
       search: container.querySelector('[data-role="search"]'),
-      list: container.querySelector('[data-role="list"]'),
+      autocomplete: container.querySelector('[data-role="autocomplete"]'),
+      listViewport: container.querySelector('[data-role="list-viewport"]'),
+      listInner: container.querySelector('[data-role="list"]'),
       selectAll: container.querySelector('[data-action="select-all"]'),
       clear: container.querySelector('[data-action="clear"]')
     };
+  }
+
+  function setupOverlayManager(callbacks = {}) {
+    const { onToggle, onOpacityChange, onReorder } = callbacks;
+    const Control = L.Control.extend({
+      options: { position: 'topright' },
+      onAdd() {
+        const container = L.DomUtil.create('div', 'leaflet-control layer-manager');
+        container.innerHTML = `
+          <div class="layer-manager-header">
+            <h2>Camadas</h2>
+          </div>
+          <div class="layer-manager-list" data-role="layer-list"></div>
+        `;
+        L.DomEvent.disableClickPropagation(container);
+        L.DomEvent.disableScrollPropagation(container);
+        return container;
+      }
+    });
+    const control = new Control();
+    map.addControl(control);
+    const container = control.getContainer();
+    const list = container.querySelector('[data-role="layer-list"]');
+    const state = {
+      items: new Map(),
+      order: [],
+      nodes: new Map(),
+      defaultOpacity
+    };
+
+    function setLayers(layers, options = {}) {
+      const defaultActive = options.defaultActive || new Set();
+      const baseOpacity = Number.isFinite(options.defaultOpacity) ? options.defaultOpacity : defaultOpacity;
+      state.items.clear();
+      state.order = [];
+      state.nodes.clear();
+      (layers || []).forEach(layer => {
+        if (!layer || !layer.key) return;
+        state.items.set(layer.key, {
+          ...layer,
+          active: defaultActive.has(layer.key),
+          opacity: baseOpacity,
+          loading: false
+        });
+        state.order.push(layer.key);
+      });
+      render();
+    }
+
+    function render() {
+      if (!list) return;
+      list.innerHTML = '';
+      state.nodes.clear();
+      state.order.forEach(key => {
+        const entry = state.items.get(key);
+        if (!entry) return;
+        const node = createLayerItem(entry);
+        list.appendChild(node);
+        state.nodes.set(key, node);
+      });
+    }
+
+    function createLayerItem(entry) {
+      const item = document.createElement('div');
+      item.className = 'layer-item';
+      item.dataset.key = entry.key;
+      item.draggable = true;
+
+      const drag = document.createElement('span');
+      drag.className = 'layer-drag';
+      drag.title = 'Arraste para reordenar a camada';
+      drag.textContent = '⋮⋮';
+
+      const toggleLabel = document.createElement('label');
+      toggleLabel.className = 'layer-toggle';
+      const toggle = document.createElement('input');
+      toggle.type = 'checkbox';
+      toggle.checked = !!entry.active;
+      toggle.addEventListener('change', event => {
+        entry.active = event.target.checked;
+        if (typeof onToggle === 'function') {
+          onToggle(entry.key, event.target.checked);
+        }
+      });
+      const name = document.createElement('span');
+      name.className = 'layer-name';
+      name.textContent = entry.name || entry.key;
+      if (entry.description) {
+        name.title = entry.description;
+      }
+      toggleLabel.append(toggle, name);
+
+      const opacityWrap = document.createElement('div');
+      opacityWrap.className = 'layer-opacity';
+      const slider = document.createElement('input');
+      slider.type = 'range';
+      slider.min = '20';
+      slider.max = '100';
+      const sliderValue = Math.round((Number.isFinite(entry.opacity) ? entry.opacity : defaultOpacity) * 100);
+      slider.value = String(sliderValue);
+      const valueLabel = document.createElement('span');
+      valueLabel.className = 'layer-opacity-value';
+      valueLabel.textContent = `${sliderValue}%`;
+      slider.addEventListener('input', event => {
+        const raw = Number(event.target.value);
+        const next = Math.min(100, Math.max(20, Number.isFinite(raw) ? raw : sliderValue));
+        valueLabel.textContent = `${next}%`;
+        entry.opacity = next / 100;
+        if (typeof onOpacityChange === 'function') {
+          onOpacityChange(entry.key, entry.opacity);
+        }
+      });
+      opacityWrap.append(slider, valueLabel);
+
+      item.append(drag, toggleLabel, opacityWrap);
+
+      item.addEventListener('dragstart', event => {
+        item.classList.add('dragging');
+        event.dataTransfer?.setData('text/plain', entry.key);
+      });
+      item.addEventListener('dragend', () => {
+        item.classList.remove('dragging');
+      });
+      item.addEventListener('dragover', event => {
+        event.preventDefault();
+        item.classList.add('drag-over');
+      });
+      item.addEventListener('dragleave', () => {
+        item.classList.remove('drag-over');
+      });
+      item.addEventListener('drop', event => {
+        event.preventDefault();
+        item.classList.remove('drag-over');
+        const sourceKey = event.dataTransfer?.getData('text/plain');
+        if (!sourceKey || sourceKey === entry.key) return;
+        reorder(sourceKey, entry.key);
+      });
+
+      return item;
+    }
+
+    function reorder(sourceKey, targetKey) {
+      const nextOrder = state.order.filter(key => key !== sourceKey);
+      const targetIndex = nextOrder.indexOf(targetKey);
+      if (targetIndex >= 0) {
+        nextOrder.splice(targetIndex, 0, sourceKey);
+      } else {
+        nextOrder.push(sourceKey);
+      }
+      state.order = nextOrder;
+      render();
+      if (typeof onReorder === 'function') {
+        onReorder(nextOrder.slice());
+      }
+    }
+
+    function updateLayer(key, patch = {}) {
+      const entry = state.items.get(key);
+      if (!entry) return;
+      Object.assign(entry, patch);
+      const node = state.nodes.get(key);
+      if (!node) return;
+      const toggle = node.querySelector('.layer-toggle input[type="checkbox"]');
+      if (toggle && patch.active !== undefined) {
+        toggle.checked = !!entry.active;
+      }
+      const slider = node.querySelector('.layer-opacity input[type="range"]');
+      const valueLabel = node.querySelector('.layer-opacity-value');
+      if (slider && valueLabel && patch.opacity !== undefined) {
+        const value = Math.round((entry.opacity ?? defaultOpacity) * 100);
+        slider.value = String(value);
+        valueLabel.textContent = `${value}%`;
+      }
+      if (patch.loading !== undefined) {
+        node.classList.toggle('loading', !!patch.loading);
+      }
+    }
+
+    return {
+      container,
+      setLayers,
+      updateLayer,
+      getOrder: () => state.order.slice()
+    };
+  }
+
+  async function handleOverlayToggle(key, enabled) {
+    const state = stateByKey.get(key);
+    if (!state) return;
+    if (enabled) {
+      overlayUi.updateLayer(key, { loading: true, active: true });
+      try {
+        if (!state.ready) {
+          await loadLayer(state);
+        }
+        if (!map.hasLayer(state.group)) {
+          map.addLayer(state.group);
+        }
+        overlayUi.updateLayer(key, { loading: false, active: true });
+        applyOverlayOrder();
+      } catch (error) {
+        console.error(`Falha ao ativar a camada ${state.def.name || key}.`, error);
+        overlayUi.updateLayer(key, { loading: false, active: false });
+      }
+    } else {
+      if (map.hasLayer(state.group)) {
+        map.removeLayer(state.group);
+      }
+      overlayUi.updateLayer(key, { active: false, loading: false });
+    }
+  }
+
+  function handleLayerOpacityChange(key, value) {
+    const state = stateByKey.get(key);
+    if (!state) return;
+    const clamped = Math.min(1, Math.max(0.1, Number(value))); // value already normalised to 0-1
+    state.opacity = clamped;
+    state.customOpacity = true;
+    updateLayerOpacity(state);
+  }
+
+  function handleLayerReorder(order) {
+    if (!Array.isArray(order) || !order.length) return;
+    overlayOrder = order.slice();
+    applyOverlayOrder();
+  }
+
+  function applyOverlayOrder() {
+    if (!overlayOrder || !overlayOrder.length) return;
+    for (let index = overlayOrder.length - 1; index >= 0; index -= 1) {
+      const key = overlayOrder[index];
+      const state = stateByKey.get(key);
+      if (!state || !state.displayLayer || !map.hasLayer(state.group)) continue;
+      state.group.eachLayer(layer => {
+        if (typeof layer.bringToFront === 'function') {
+          layer.bringToFront();
+        }
+      });
+    }
   }
 
   function createLegendDock() {
