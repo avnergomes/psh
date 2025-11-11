@@ -47,9 +47,28 @@
   };
 
   // Campos de identificação
-  const ID_FIELD_CANDIDATES = ['ID', 'id', 'Cod_otto', 'COD_OTTO'];
-  const MICRO_BACIA_FIELDS = ['Bacia', 'BACIA', 'Microbacias_Bacia'];
-  const MICRO_MANANCIAL_FIELDS = ['Manancial', 'MANANCIAL', 'Microbacias_Manancial'];
+  const MICRO_RIVER_FIELDS = [
+    'Microbacias Nome Manancial',
+    'Microbacias Nome do Rio',
+    'Nome do Rio',
+    'Nome Rio',
+    'Nome Manancial',
+    'Nome do Manancial',
+    'Nome_Rio',
+    'nome_rio',
+    'rio',
+    'rio_nome'
+  ];
+  const ID_FIELD_CANDIDATES = [
+    ...MICRO_RIVER_FIELDS,
+    'ID',
+    'id',
+    'Cod_otto',
+    'COD_OTTO'
+  ];
+  const MICRO_ID_FALLBACK_FIELDS = ['ID', 'id', 'Cod_otto', 'COD_OTTO'];
+  const MICRO_BACIA_FIELDS = ['Bacia', 'BACIA', 'Microbacias_Bacia', 'Microbacias Bacia'];
+  const MICRO_MANANCIAL_FIELDS = ['Manancial', 'MANANCIAL', 'Microbacias_Manancial', 'Microbacias Manancial'];
   const USO_FIELDS = ['Nivel_II', 'NIVEL_II', 'nivel_ii'];
   const USO_FALLBACK_FIELDS = ['Nivel_I', 'NIVEL_I', 'nivel_i'];
   const DECLIVIDADE_FIELDS = ['ClDec', 'CLDEC', 'cldec'];
@@ -110,6 +129,10 @@
       .toLowerCase();
   }
 
+  function normaliseKey(value) {
+    return normaliseText(value).replace(/[^a-z0-9]+/g, '');
+  }
+
   function escapeHtml(value) {
     return String(value)
       .replace(/&/g, '&amp;')
@@ -139,20 +162,10 @@
 
   function getFirstValue(props, candidates) {
     if (!props) return '';
-    const lower = Object.create(null);
-    Object.keys(props).forEach(key => {
-      lower[key.toLowerCase()] = key;
-    });
-    for (const candidate of candidates) {
-      const key = lower[candidate.toLowerCase()];
-      if (key !== undefined) {
-        const value = props[key];
-        if (value !== undefined && value !== null && value !== '') {
-          return value;
-        }
-      }
-    }
-    return '';
+    const key = findField(props, candidates);
+    if (!key) return '';
+    const value = props[key];
+    return value !== undefined && value !== null && value !== '' ? value : '';
   }
 
   function getUsoClass(props) {
@@ -425,12 +438,31 @@
   function findField(props, candidates) {
     if (!props) return null;
     const lower = Object.create(null);
+    const normalizedMap = Object.create(null);
+    const normalizedEntries = [];
     Object.keys(props).forEach(key => {
-      lower[key.toLowerCase()] = key;
+      const lowerKey = key.toLowerCase();
+      lower[lowerKey] = key;
+      const normalizedKey = normaliseKey(key);
+      if (normalizedKey) {
+        normalizedMap[normalizedKey] = key;
+        normalizedEntries.push({ normalized: normalizedKey, key });
+      }
     });
     for (const candidate of candidates) {
-      const match = lower[candidate.toLowerCase()];
-      if (match) return match;
+      if (!candidate) continue;
+      const lowerCandidate = candidate.toLowerCase();
+      const direct = lower[lowerCandidate];
+      if (direct) return direct;
+      const normalizedCandidate = normaliseKey(candidate);
+      if (!normalizedCandidate) continue;
+      const exact = normalizedMap[normalizedCandidate];
+      if (exact) return exact;
+      for (const entry of normalizedEntries) {
+        if (entry.normalized.includes(normalizedCandidate)) {
+          return entry.key;
+        }
+      }
     }
     return null;
   }
@@ -766,16 +798,25 @@
     const mapById = new Map();
     enriched.forEach(entry => {
       const { feature, id } = entry;
-      if (!id || mapById.has(id)) return;
       const props = feature?.properties || {};
+      const riverName = trim(id || getFirstValue(props, MICRO_RIVER_FIELDS));
+      const fallbackId = trim(getFirstValue(props, MICRO_ID_FALLBACK_FIELDS));
+      const optionId = riverName || fallbackId;
+      if (!optionId || mapById.has(optionId)) return;
       const bacia = trim(getFirstValue(props, MICRO_BACIA_FIELDS));
       const manancial = trim(getFirstValue(props, MICRO_MANANCIAL_FIELDS));
-      const subtitle = [bacia, manancial].filter(Boolean).join(' • ');
-      mapById.set(id, {
-        id,
-        title: `Ottobacia ${id}`,
-        subtitle,
-        search: normaliseText(`${id} ${bacia} ${manancial}`)
+      const subtitleParts = [];
+      if (fallbackId && fallbackId !== optionId) {
+        subtitleParts.push(`Ottobacia ${fallbackId}`);
+      }
+      if (bacia) subtitleParts.push(bacia);
+      if (manancial && manancial !== riverName) subtitleParts.push(manancial);
+      const title = riverName || (fallbackId ? `Ottobacia ${fallbackId}` : optionId);
+      mapById.set(optionId, {
+        id: optionId,
+        title,
+        subtitle: subtitleParts.join(' • '),
+        search: normaliseText(`${optionId} ${riverName} ${fallbackId} ${bacia} ${manancial}`)
       });
     });
     microOptions = Array.from(mapById.values()).sort((a, b) => a.title.localeCompare(b.title, 'pt-BR'));
@@ -893,7 +934,7 @@
             </div>
           </div>
           <div class="micro-actions">
-            <input type="search" class="micro-search" placeholder="Buscar por ID, bacia ou manancial" data-role="search" />
+            <input type="search" class="micro-search" placeholder="Buscar por rio, bacia ou ID" data-role="search" />
             <div class="micro-buttons">
               <button type="button" class="btn-chip" data-action="select-all">Selecionar todas</button>
               <button type="button" class="btn-chip" data-action="clear">Limpar seleção</button>
