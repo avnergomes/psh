@@ -43,6 +43,8 @@ streamlit run app.py
 - **Microbacias (PSH)** - Delimitação das microbacias do programa
 - **Uso do Solo (Ottobacias)** - Classificação detalhada do uso e cobertura do solo
 - **Uso do Solo em APP** - Análise de conflitos de uso em Áreas de Preservação Permanente
+- **Declividade (Classes %)** - Distribuição das classes de declividade por ottobacia
+- **Curvas de Nível** - Visualização das curvas de nível para análise topográfica
 
 ### Filtros Inteligentes
 
