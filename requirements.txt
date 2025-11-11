@@ -5,3 +5,6 @@ matplotlib
 plotly
 shapely
 openpyxl
+folium
+streamlit-folium
+pyproj
