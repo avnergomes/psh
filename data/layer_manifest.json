@@ -1,0 +1,73 @@
+{
+  "conflitosdeuso__uso_solo_em_app": [
+    "conflitosdeuso__uso_solo_em_app.geojson_part-002.gz"
+  ],
+  "curvasdenivel__curvas_otto": [
+    "curvasdenivel__curvas_otto.geojson_part-002.gz",
+    "curvasdenivel__curvas_otto.geojson_part-003.gz",
+    "curvasdenivel__curvas_otto.geojson_part-004.gz",
+    "curvasdenivel__curvas_otto.geojson_part-005.gz",
+    "curvasdenivel__curvas_otto.geojson_part-006.gz",
+    "curvasdenivel__curvas_otto.geojson_part-007.gz",
+    "curvasdenivel__curvas_otto.geojson_part-008.gz",
+    "curvasdenivel__curvas_otto.geojson_part-009.gz",
+    "curvasdenivel__curvas_otto.geojson_part-010.gz",
+    "curvasdenivel__curvas_otto.geojson_part-011.gz",
+    "curvasdenivel__curvas_otto.geojson_part-012.gz",
+    "curvasdenivel__curvas_otto.geojson_part-013.gz",
+    "curvasdenivel__curvas_otto.geojson_part-014.gz",
+    "curvasdenivel__curvas_otto.geojson_part-015.gz",
+    "curvasdenivel__curvas_otto.geojson_part-016.gz",
+    "curvasdenivel__curvas_otto.geojson_part-017.gz",
+    "curvasdenivel__curvas_otto.geojson_part-018.gz",
+    "curvasdenivel__curvas_otto.geojson_part-019.gz",
+    "curvasdenivel__curvas_otto.geojson_part-020.gz",
+    "curvasdenivel__curvas_otto.geojson_part-021.gz",
+    "curvasdenivel__curvas_otto.geojson_part-022.gz",
+    "curvasdenivel__curvas_otto.geojson_part-023.gz",
+    "curvasdenivel__curvas_otto.geojson_part-024.gz",
+    "curvasdenivel__curvas_otto.geojson_part-025.gz",
+    "curvasdenivel__curvas_otto.geojson_part-026.gz",
+    "curvasdenivel__curvas_otto.geojson_part-027.gz",
+    "curvasdenivel__curvas_otto.geojson_part-028.gz",
+    "curvasdenivel__curvas_otto.geojson_part-029.gz",
+    "curvasdenivel__curvas_otto.geojson_part-030.gz",
+    "curvasdenivel__curvas_otto.geojson_part-031.gz",
+    "curvasdenivel__curvas_otto.geojson_part-032.gz",
+    "curvasdenivel__curvas_otto.geojson_part-033.gz",
+    "curvasdenivel__curvas_otto.geojson_part-034.gz",
+    "curvasdenivel__curvas_otto.geojson_part-035.gz",
+    "curvasdenivel__curvas_otto.geojson_part-036.gz",
+    "curvasdenivel__curvas_otto.geojson_part-037.gz",
+    "curvasdenivel__curvas_otto.geojson_part-038.gz",
+    "curvasdenivel__curvas_otto.geojson_part-039.gz",
+    "curvasdenivel__curvas_otto.geojson_part-040.gz",
+    "curvasdenivel__curvas_otto.geojson_part-041.gz",
+    "curvasdenivel__curvas_otto.geojson_part-042.gz"
+  ],
+  "declividade__declividade_otto": [
+    "declividade__declividade_otto.geojson_part-003.gz",
+    "declividade__declividade_otto.geojson_part-004.gz",
+    "declividade__declividade_otto.geojson_part-005.gz"
+  ],
+  "microbacias_selecionadas__microbacias": [
+    "microbacias_selecionadas__microbacias.geojson_part-001.gz"
+  ],
+  "uso_solo__usodosolo_otto": [
+    "uso_solo__usodosolo_otto.geojson_part-002.gz",
+    "uso_solo__usodosolo_otto.geojson_part-003.gz",
+    "uso_solo__usodosolo_otto.geojson_part-004.gz",
+    "uso_solo__usodosolo_otto.geojson_part-005.gz",
+    "uso_solo__usodosolo_otto.geojson_part-006.gz",
+    "uso_solo__usodosolo_otto.geojson_part-007.gz",
+    "uso_solo__usodosolo_otto.geojson_part-008.gz",
+    "uso_solo__usodosolo_otto.geojson_part-009.gz",
+    "uso_solo__usodosolo_otto.geojson_part-010.gz",
+    "uso_solo__usodosolo_otto.geojson_part-011.gz",
+    "uso_solo__usodosolo_otto.geojson_part-012.gz",
+    "uso_solo__usodosolo_otto.geojson_part-013.gz",
+    "uso_solo__usodosolo_otto.geojson_part-014.gz",
+    "uso_solo__usodosolo_otto.geojson_part-015.gz",
+    "uso_solo__usodosolo_otto.geojson_part-016.gz"
+  ]
+}

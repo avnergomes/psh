@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Programa de Segurança Hídrica - WebGIS</title>
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-o88AwQnZB+14uT2FfjHytqvC2mZbYY16R0C9Q0i0XDY="
+      crossorigin=""
+    />
+    <style>
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+        background-color: #f7f7f7;
+        color: #2c3e50;
+      }
+
+      header {
+        padding: 16px 24px;
+        background: white;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+        position: sticky;
+        top: 0;
+        z-index: 1000;
+      }
+
+      header h1 {
+        margin: 0 0 4px 0;
+        font-size: 1.5rem;
+      }
+
+      header p {
+        margin: 0;
+        font-size: 0.95rem;
+        color: #5d6d7e;
+      }
+
+      #map {
+        height: calc(100% - 88px);
+      }
+
+      .leaflet-control-layers-expanded {
+        max-height: 280px;
+        overflow-y: auto;
+      }
+
+      .legend {
+        position: absolute;
+        bottom: 24px;
+        left: 24px;
+        background: rgba(255, 255, 255, 0.93);
+        padding: 12px 16px;
+        border-radius: 8px;
+        box-shadow: 0 2px 12px rgba(0, 0, 0, 0.15);
+        font-size: 13px;
+        line-height: 1.4;
+      }
+
+      .legend h3 {
+        margin: 0 0 8px 0;
+        font-size: 14px;
+      }
+
+      .legend-item {
+        display: flex;
+        align-items: center;
+        margin-bottom: 4px;
+      }
+
+      .legend-swatch {
+        width: 14px;
+        height: 14px;
+        border-radius: 3px;
+        margin-right: 6px;
+        border: 1px solid rgba(44, 62, 80, 0.3);
+      }
+
+      .loading {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        padding: 12px 18px;
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.95);
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.15);
+        font-size: 15px;
+        color: #2c3e50;
+        z-index: 2000;
+      }
+
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        background: #3498db;
+        color: white;
+        border-radius: 999px;
+        padding: 4px 10px;
+        font-size: 0.8rem;
+        margin-left: 10px;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>
+        Programa de Segurança Hídrica
+        <span class="badge">WebGIS</span>
+      </h1>
+      <p>
+        Visualização interativa das camadas geoespaciais consolidadas do Programa de Segurança Hídrica
+        em uma única página. Utilize o controle de camadas para ligar ou desligar os conjuntos de dados.
+      </p>
+    </header>
+    <div id="map"></div>
+    <div id="loading" class="loading" hidden>Carregando camadas geográficas…</div>
+    <div id="legend" class="legend" hidden></div>
+
+    <script
+      src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+      integrity="sha256-VH6UaYQp6G8Lxv6w2J8bSWTDSGRj3s3GZMR9z6g0wY8="
+      crossorigin=""
+    ></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js" integrity="sha512-0Jlt3FVmXCAqeEPsxle0NeMB8JVUKgv6YEH1rxFL8r2uvW0HQD6VkEUuVDjwWwHt66OBZj4flSgWxLtrP3M52A==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script>
+      const layerConfig = [
+        {
+          id: "microbacias_selecionadas__microbacias",
+          label: "Microbacias (PSH)",
+          defaultVisible: true,
+          style: { color: "#2c3e50", weight: 1, fillOpacity: 0.4 },
+          rename: {
+            Bacia: "Microbacias_Bacia",
+            Manancial: "Microbacias_Manancial",
+            "Nº Manancial": "Microbacias_Nº Manancial",
+            "Nome Manancial": "Microbacias_Nome Manancial"
+          },
+          popupFields: ["ID", "Bacia", "Manancial", "Nome Manancial"]
+        },
+        {
+          id: "uso_solo__usodosolo_otto",
+          label: "Uso do Solo (Ottobacias)",
+          defaultVisible: false,
+          style: { color: "#1b9e77", weight: 0.6, fillOpacity: 0.55 },
+          rename: {
+            Nivel_I: "NIVEL_I",
+            Nivel_II: "NIVEL_II",
+            Nivel_III: "NIVEL_III"
+          },
+          popupFields: ["Nivel_I", "Nivel_II", "Nivel_III"],
+          categoryField: "Nivel_II"
+        },
+        {
+          id: "conflitosdeuso__uso_solo_em_app",
+          label: "Uso do Solo em APP",
+          defaultVisible: false,
+          style: { color: "#d95f02", weight: 0.6, fillOpacity: 0.55 },
+          rename: {
+            Nivel_I: "nivel_i",
+            Nivel_II: "nivel_ii",
+            Nivel_III: "nivel_iii"
+          },
+          popupFields: ["Nivel_I", "Nivel_II", "Nivel_III"],
+          categoryField: "Nivel_II"
+        },
+        {
+          id: "declividade__declividade_otto",
+          label: "Declividade (Ottobacias)",
+          defaultVisible: false,
+          style: { color: "#7570b3", weight: 0.7, fillOpacity: 0.45 },
+          rename: {
+            Classe: "ClDec"
+          },
+          popupFields: ["Classe", "Regiao"],
+          categoryField: "Classe"
+        },
+        {
+          id: "curvasdenivel__curvas_otto",
+          label: "Curvas de Nível",
+          defaultVisible: false,
+          style: { color: "#34495e", weight: 0.8, fillOpacity: 0 },
+          geometryType: "line"
+        }
+      ];
+
+      const qualitativePalette = [
+        "#1b9e77",
+        "#d95f02",
+        "#7570b3",
+        "#e7298a",
+        "#66a61e",
+        "#e6ab02",
+        "#a6761d",
+        "#666666",
+        "#1f77b4",
+        "#ff7f0e",
+        "#2ca02c",
+        "#9467bd",
+        "#8c564b",
+        "#e377c2",
+        "#7f7f7f",
+        "#bcbd22",
+        "#17becf"
+      ];
+
+      const legendContainer = document.getElementById("legend");
+      const loadingElement = document.getElementById("loading");
+
+      const map = L.map("map", {
+        center: [-24.5, -51.5],
+        zoom: 7,
+        preferCanvas: true
+      });
+
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 18,
+        attribution: "&copy; <a href=\"https://www.openstreetmap.org/copyright\">OpenStreetMap</a>"
+      }).addTo(map);
+
+      const overlayLayers = {};
+      const legendMetadata = new Map();
+      const activeLegendIds = new Set();
+      const globalBounds = L.latLngBounds();
+
+      function toggleLoading(show) {
+        loadingElement.hidden = !show;
+      }
+
+      function applyRenameRules(properties, rules) {
+        if (!rules) {
+          return properties;
+        }
+        const renamed = { ...properties };
+        const keyIndex = Object.keys(properties).map((key) => ({
+          lower: key.toLowerCase(),
+          original: key
+        }));
+        Object.entries(rules).forEach(([newName, fragment]) => {
+          const lookup = String(fragment).toLowerCase();
+          const exactMatch = keyIndex.find((entry) => entry.lower === lookup);
+          const partialMatch = keyIndex.find(
+            (entry) => lookup && entry.lower.includes(lookup)
+          );
+          const target = exactMatch || partialMatch;
+          if (target) {
+            renamed[newName] = properties[target.original];
+          }
+        });
+        return renamed;
+      }
+
+      function buildPopupContent(properties, fields) {
+        if (!fields || !fields.length) {
+          return Object.entries(properties)
+            .slice(0, 8)
+            .map(([key, value]) => `<strong>${key}:</strong> ${value}`)
+            .join("<br>");
+        }
+        return fields
+          .filter((field) => field in properties)
+          .map((field) => `<strong>${field}:</strong> ${properties[field]}`)
+          .join("<br>");
+      }
+
+      function createCategoryStyler(field, baseStyle) {
+        if (!field) {
+          return () => ({ ...baseStyle });
+        }
+        const colorMap = new Map();
+        let paletteIndex = 0;
+        return (feature) => {
+          const value = feature.properties?.[field];
+          if (!colorMap.has(value)) {
+            const color = qualitativePalette[paletteIndex % qualitativePalette.length];
+            colorMap.set(value, color);
+            paletteIndex += 1;
+          }
+          const fillColor = colorMap.get(value);
+          return {
+            ...baseStyle,
+            color: baseStyle.color || fillColor,
+            fillColor: fillColor || baseStyle.color
+          };
+        };
+      }
+
+      function updateLegend() {
+        if (!activeLegendIds.size) {
+          legendContainer.hidden = true;
+          legendContainer.innerHTML = "";
+          return;
+        }
+        const sections = Array.from(activeLegendIds)
+          .map((id) => legendMetadata.get(id))
+          .filter(Boolean);
+        const html = sections
+          .map((section) => {
+            const items = section.items
+              .map(
+                (item) => `
+                  <div class="legend-item">
+                    <span class="legend-swatch" style="background:${item.color}"></span>
+                    <span>${item.label}</span>
+                  </div>
+                `
+              )
+              .join("");
+            return `
+              <div>
+                <h3>${section.title}</h3>
+                ${items}
+              </div>
+            `;
+          })
+          .join("<hr style=\"border:none;border-top:1px solid rgba(44,62,80,0.1);margin:10px 0;\">");
+        legendContainer.innerHTML = html;
+        legendContainer.hidden = false;
+      }
+
+      async function fetchGeoJSON(path) {
+        const response = await fetch(path);
+        if (!response.ok) {
+          throw new Error(`Falha ao carregar ${path}`);
+        }
+        const arrayBuffer = await response.arrayBuffer();
+        let text;
+        if (path.endsWith(".gz")) {
+          const data = new Uint8Array(arrayBuffer);
+          text = pako.ungzip(data, { to: "string" });
+        } else {
+          text = new TextDecoder("utf-8").decode(arrayBuffer);
+        }
+        return JSON.parse(text);
+      }
+
+      async function loadLayer(manifest, config) {
+        const fileList = manifest[config.id];
+        if (!fileList || !fileList.length) {
+          console.warn(`Nenhum arquivo encontrado para ${config.label}`);
+          return;
+        }
+        const collections = await Promise.all(
+          fileList.map((file) => fetchGeoJSON(`data/${file}`))
+        );
+        const features = collections.flatMap((collection) => collection.features || []);
+        const styledFeatures = features.map((feature) => {
+          const properties = applyRenameRules(feature.properties || {}, config.rename);
+          return { ...feature, properties };
+        });
+        const dataset = { type: "FeatureCollection", features: styledFeatures };
+
+        const styleFn = createCategoryStyler(config.categoryField, config.style || {});
+        const layer = L.geoJSON(dataset, {
+          style: (feature) => {
+            const style = styleFn(feature);
+            if (config.geometryType === "line") {
+              return { ...style, fillOpacity: 0 };
+            }
+            return style;
+          },
+          onEachFeature: (feature, layerInstance) => {
+            const popupContent = buildPopupContent(
+              feature.properties || {},
+              config.popupFields
+            );
+            if (popupContent) {
+              layerInstance.bindPopup(popupContent);
+            }
+          }
+        });
+
+        const bounds = layer.getBounds();
+        if (bounds.isValid()) {
+          globalBounds.extend(bounds);
+        }
+
+        if (config.categoryField) {
+          const categories = new Map();
+          layer.eachLayer((featureLayer) => {
+            const value = featureLayer.feature?.properties?.[config.categoryField];
+            if (!categories.has(value)) {
+              const appliedStyle = styleFn(featureLayer.feature);
+              categories.set(value, appliedStyle.fillColor || appliedStyle.color);
+            }
+          });
+          legendMetadata.set(config.id, {
+            title: config.label,
+            items: Array.from(categories.entries()).map(([label, color]) => ({
+              label,
+              color: color || config.style?.color || "#2c3e50"
+            }))
+          });
+          if (config.defaultVisible) {
+            activeLegendIds.add(config.id);
+          }
+        } else {
+          legendMetadata.delete(config.id);
+        }
+
+        overlayLayers[config.label] = layer;
+        if (config.defaultVisible) {
+          layer.addTo(map);
+        }
+      }
+
+      async function init() {
+        toggleLoading(true);
+        try {
+          const manifestResponse = await fetch("data/layer_manifest.json");
+          const manifest = await manifestResponse.json();
+          for (const config of layerConfig) {
+            // eslint-disable-next-line no-await-in-loop
+            await loadLayer(manifest, config);
+          }
+          L.control.layers(null, overlayLayers, { collapsed: false }).addTo(map);
+          map.on("overlayadd", (event) => {
+            const config = layerConfig.find((layer) => layer.label === event.name);
+            if (config?.categoryField) {
+              activeLegendIds.add(config.id);
+              updateLegend();
+            }
+          });
+          map.on("overlayremove", (event) => {
+            const config = layerConfig.find((layer) => layer.label === event.name);
+            if (config?.categoryField) {
+              activeLegendIds.delete(config.id);
+              updateLegend();
+            }
+          });
+          if (globalBounds.isValid()) {
+            map.fitBounds(globalBounds);
+          }
+          updateLegend();
+        } catch (error) {
+          console.error(error);
+          alert("Erro ao carregar as camadas geográficas. Consulte o console para mais detalhes.");
+        } finally {
+          toggleLoading(false);
+        }
+      }
+
+      init();
+    </script>
+  </body>
+</html>
