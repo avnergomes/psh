@@ -96,6 +96,57 @@ body {
   font-size: 0.85rem;
 }
 
+.loading-container,
+.loading-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  color: var(--muted);
+}
+
+.loading-container {
+  justify-content: center;
+  width: 100%;
+  padding: 1rem 0.5rem;
+}
+
+.loading-inline {
+  gap: 0.45rem;
+}
+
+.spinner {
+  width: 20px;
+  height: 20px;
+  animation: rotate 2s linear infinite;
+}
+
+.spinner circle {
+  stroke: #6366f1;
+  stroke-linecap: round;
+  animation: dash 1.5s ease-in-out infinite;
+}
+
+@keyframes rotate {
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes dash {
+  0% {
+    stroke-dasharray: 1, 150;
+    stroke-dashoffset: 0;
+  }
+  50% {
+    stroke-dasharray: 90, 150;
+    stroke-dashoffset: -35;
+  }
+  100% {
+    stroke-dasharray: 90, 150;
+    stroke-dashoffset: -124;
+  }
+}
+
 .version {
   margin-left: auto;
   font-size: 0.85rem;
@@ -372,6 +423,36 @@ body {
   padding: 1.25rem 0.5rem;
   text-align: center;
   font-size: 0.85rem;
+}
+
+.search-no-results {
+  display: grid;
+  justify-items: center;
+  gap: 0.75rem;
+  padding: 1.5rem 1rem;
+  text-align: center;
+  color: #1f2937;
+}
+
+.search-no-results p {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.search-no-results strong {
+  color: #111827;
+}
+
+.search-no-results .btn-chip {
+  margin-top: 0.25rem;
+}
+
+.icon-search-empty {
+  width: 48px;
+  height: 48px;
+  fill: none;
+  stroke: #6366f1;
+  stroke-width: 1.6;
 }
 
 /* Gerenciador de camadas */
