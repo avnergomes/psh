@@ -26,6 +26,16 @@ python -m http.server 8000
 # Acesse: http://localhost:8000
 ```
 
+#### Build estático
+
+Para gerar um pacote pronto para distribuição (por exemplo, para publicar em um serviço de hospedagem estática), utilize o script de build:
+
+```bash
+npm install
+npm run build
+# Os arquivos serão gerados em dist/
+```
+
 ### Dashboard Streamlit
 
 ```bash
