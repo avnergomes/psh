@@ -5,23 +5,80 @@
   const pako = window.pako || null;
 
   function resolveAppBaseUrl() {
-    try {
-      if (typeof window !== 'undefined' && window.__APP_BASE_URL__) {
-        return window.__APP_BASE_URL__;
+    const normalise = value => {
+      if (!value) return null;
+      try {
+        const baseHref = typeof window !== 'undefined' && window.location && window.location.href
+          ? window.location.href
+          : undefined;
+        const url = baseHref ? new URL(value, baseHref) : new URL(value);
+        url.hash = '';
+        url.search = '';
+        let href = url.href;
+        if (!href.endsWith('/')) {
+          href = href.replace(/[^/]*$/, '');
+        }
+        if (!href.endsWith('/')) {
+          href = `${href}/`;
+        }
+        return href;
+      } catch (error) {
+        console.warn('URL base inválida detectada.', value, error);
+        return null;
       }
-      const base = new URL('./', window.location.href);
-      if (typeof window !== 'undefined') {
-        window.__APP_BASE_URL__ = base.href;
-      }
-      return base.href;
-    } catch (error) {
-      console.warn('Não foi possível determinar a URL base automaticamente.', error);
-      return './';
+    };
+
+    if (typeof window !== 'undefined' && window.__APP_BASE_URL__) {
+      const cached = normalise(window.__APP_BASE_URL__);
+      if (cached) return cached;
     }
+
+    if (typeof document !== 'undefined') {
+      const baseEl = document.querySelector('base[href]');
+      if (baseEl?.href) {
+        const fromBase = normalise(baseEl.href);
+        if (fromBase) {
+          if (typeof window !== 'undefined') {
+            window.__APP_BASE_URL__ = fromBase;
+          }
+          return fromBase;
+        }
+      }
+      if (document.baseURI) {
+        const fromBaseUri = normalise(document.baseURI);
+        if (fromBaseUri) {
+          if (typeof window !== 'undefined') {
+            window.__APP_BASE_URL__ = fromBaseUri;
+          }
+          return fromBaseUri;
+        }
+      }
+    }
+
+    if (typeof window !== 'undefined' && window.location && window.location.href) {
+      const fromLocation = normalise(window.location.href);
+      if (fromLocation) {
+        window.__APP_BASE_URL__ = fromLocation;
+        return fromLocation;
+      }
+    }
+
+    console.warn('Não foi possível determinar a URL base automaticamente. Utilizando raiz relativa.');
+    return './';
   }
 
   const APP_BASE_URL = resolveAppBaseUrl();
-  const DATA_BASE_URL = new URL('data/', APP_BASE_URL);
+  const DATA_BASE_URL = (() => {
+    try {
+      return new URL('data/', APP_BASE_URL).href;
+    } catch (error) {
+      console.warn('Não foi possível construir a URL dos dados. Usando localização atual como base.', error);
+      if (typeof window !== 'undefined' && window.location && window.location.href) {
+        return new URL('data/', window.location.href).href;
+      }
+      return 'data/';
+    }
+  })();
 
   const fmt = {
     ha(value) {
@@ -203,7 +260,15 @@
   }
 
   function makeDataUrl(file) {
-    return new URL(file, DATA_BASE_URL).href;
+    try {
+      return new URL(file, DATA_BASE_URL).href;
+    } catch (error) {
+      console.warn(`Falha ao montar a URL para ${file}.`, error);
+      if (typeof window !== 'undefined' && window.location && window.location.href) {
+        return new URL(file, window.location.href).href;
+      }
+      return `data/${file}`;
+    }
   }
 
   async function fetchGeoJsonFile(file) {
