@@ -3,55 +3,48 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>💧 Programa de Segurança Hídrica - Diagnóstico Territorial</title>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <script>
-    (function ensureBaseHref() {
-      try {
-        const current = new URL(document.currentScript?.src || window.location.href, window.location.href);
-        const base = new URL('./', current.href);
-        const baseEl = document.createElement('base');
-        baseEl.href = base.href;
-        document.head.appendChild(baseEl);
-        window.__APP_BASE_URL__ = base.href;
-      } catch (error) {
-        console.error('Não foi possível definir a base dos assets.', error);
-      }
-    })();
-  </script>
-  <link rel="stylesheet" href="styles.css" />
+  <title>Programa de Segurança Hídrica - Diagnóstico Territorial</title>
+
+  <!-- Leaflet -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="anonymous">
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin="anonymous"></script>
+
+  <!-- Turf + Pako -->
+  <script src="https://unpkg.com/@turf/turf@6.5.0/turf.min.js"></script>
+  <script src="https://unpkg.com/pako@2.1.0/dist/pako.min.js"></script>
+
+  <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
-  <header class="topbar">
-    <div class="header-logos">
-      <img src="assets/IDR_GOV_Seab_V_1.webp" alt="IDR-SEAB" class="logo-small" />
+  <header class="app-header">
+    <img src="./assets/IDR_GOV_Seab_V_1.webp" alt="IDR-SEAB" class="logo"/>
+    <div class="titles">
+      <h1>Programa de Segurança Hídrica - PSH</h1>
+      <div id="version">v1.1 (GitHub Pages fix)</div>
     </div>
-    <h1 class="header-title">Programa de Segurança Hídrica - PSH</h1>
-    <button id="fitAll" class="btn" type="button">Ajustar visão</button>
-    <div class="theme-select" title="Alterar o tema cartográfico do mapa base.">
-      <label for="themePreset">Tema</label>
-      <select id="themePreset">
-        <option value="light">Claro</option>
-        <option value="streets">Padrão</option>
-        <option value="satellite">Satélite</option>
-        <option value="terrain">Topográfico</option>
-        <option value="dark">Escuro</option>
-      </select>
-    </div>
-    <div class="slider-row">
-      <span class="muted">Opacidade padrão</span>
-      <input id="opacity" type="range" min="20" max="100" value="70" />
-      <span id="opacityVal" class="muted">70%</span>
-    </div>
-    <span class="version">v1.0 — IDR-Paraná © 2025</span>
   </header>
 
-  <div id="map"></div>
+  <main>
+    <div class="toolbar">
+      <button id="btn-fit">Ajustar visão</button>
+      <label>Opacidade padrão <span id="opacity-val">70%</span>
+        <input id="opacity" type="range" min="10" max="100" step="5" value="70" />
+      </label>
+    </div>
+    <div id="map"></div>
+    <aside class="panel">
+      <h3>Camadas</h3>
+      <label><input type="checkbox" data-layer="microbacias" checked> Microbacias</label>
+      <label><input type="checkbox" data-layer="uso_solo" checked> Uso do Solo</label>
+      <label><input type="checkbox" data-layer="conflitos" checked> Conflitos de Uso</label>
+      <div class="hint">Os dados são carregados de <code>./data/*.geojson_part-*.gz</code>.</div>
+    </aside>
+  </main>
 
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="https://unpkg.com/pako@2.1.0/dist/pako.min.js"></script>
-  <script src="https://unpkg.com/@turf/turf@6.5.0/turf.min.js"></script>
-  <script src="utils/microAggregation.js" defer></script>
-  <script src="script.js" defer></script>
+  <div id="errors" class="errors" hidden></div>
+
+  <footer class="footer">IDR-Paraná © 2025</footer>
+
+  <script type="module" src="./script.js"></script>
 </body>
 </html>
