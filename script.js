@@ -155,6 +155,23 @@
       .replace(/'/g, '&#39;');
   }
 
+  function createLoadingMarkup(message, options = {}) {
+    const wrapper = options.inline ? 'span' : 'div';
+    const className = options.inline ? 'loading-inline' : 'loading-container';
+    const safeMessage = escapeHtml(message || 'Carregando…');
+    return `<${wrapper} class="${className}" role="status" aria-live="polite">\n`
+      + '  <svg class="spinner" viewBox="0 0 50 50" aria-hidden="true">\n'
+      + '    <circle cx="25" cy="25" r="20" fill="none" stroke-width="3"></circle>\n'
+      + '  </svg>\n'
+      + `  <span>${safeMessage}</span>\n`
+      + `</${wrapper}>`;
+  }
+
+  function showLoadingState(element, message, options = {}) {
+    if (!element) return;
+    element.innerHTML = createLoadingMarkup(message, options);
+  }
+
   function parseNumeric(value) {
     if (value === undefined || value === null || value === '') return Number.NaN;
     if (typeof value === 'number') return value;
@@ -711,6 +728,15 @@
     onReorder: handleLayerReorder
   });
 
+  if (microUi.summary) {
+    showLoadingState(microUi.summary, 'Carregando microbacias…', { inline: true });
+    microUi.summary.classList.add('muted');
+  }
+  if (microUi.listInner) {
+    microUi.listInner.style.height = 'auto';
+    showLoadingState(microUi.listInner, 'Carregando microbacias…');
+  }
+
   const microState = {
     hierarchy: { groups: [], idLookup: new Map(), allIds: [] },
     collapsed: new Map(),
@@ -725,6 +751,8 @@
   let activeIds = new Set();
   let microOptionsReady = false;
   let searchQuery = '';
+  let searchTimeout = null;
+  let searchLoading = false;
 
   let defaultOpacity = 0.7;
   const opacityInput = document.getElementById('opacity');
@@ -849,10 +877,10 @@
 
   if (microUi.search) {
     microUi.search.addEventListener('input', () => {
-      searchQuery = microUi.search.value || '';
-      rebuildMicroRows();
-      renderMicroList({ resetScroll: true });
-      updateAutocomplete();
+      handleSearchInput(microUi.search.value || '');
+    });
+    microUi.search.addEventListener('search', () => {
+      handleSearchInput(microUi.search.value || '');
     });
     microUi.search.addEventListener('focus', () => {
       updateAutocomplete();
@@ -1040,7 +1068,7 @@
   function updateMicroSummary() {
     if (!microUi.summary) return;
     if (!microOptionsReady) {
-      microUi.summary.textContent = 'Carregando microbacias…';
+      showLoadingState(microUi.summary, 'Carregando microbacias…', { inline: true });
       microUi.summary.classList.add('muted');
       return;
     }
@@ -1129,14 +1157,23 @@
     if (options.resetScroll && microUi.listViewport) {
       microUi.listViewport.scrollTop = 0;
     }
+    if (searchLoading) {
+      microUi.listInner.style.height = 'auto';
+      showLoadingState(microUi.listInner, 'Buscando microbacias…');
+      return;
+    }
     if (!microOptionsReady) {
       microUi.listInner.style.height = 'auto';
-      microUi.listInner.innerHTML = '<div class="micro-empty muted">Carregando microbacias…</div>';
+      showLoadingState(microUi.listInner, 'Carregando microbacias…');
       return;
     }
     if (!microState.rows.length) {
       microUi.listInner.style.height = 'auto';
-      microUi.listInner.innerHTML = '<div class="micro-empty muted">Nenhum resultado para o filtro atual.</div>';
+      if (normaliseText(searchQuery)) {
+        showNoResults(searchQuery);
+      } else {
+        microUi.listInner.innerHTML = '<div class="micro-empty muted">Nenhum resultado para o filtro atual.</div>';
+      }
       return;
     }
     const viewport = microUi.listViewport;
@@ -1155,6 +1192,91 @@
     }
     microUi.listInner.style.height = `${microState.totalHeight}px`;
     microUi.listInner.replaceChildren(fragment);
+  }
+
+  function showSearchLoading(isLoading) {
+    searchLoading = !!isLoading;
+    if (!microUi.listInner) return;
+    if (searchLoading) {
+      microUi.listInner.style.height = 'auto';
+      showLoadingState(microUi.listInner, 'Buscando microbacias…');
+    }
+  }
+
+  function clearSearch() {
+    searchQuery = '';
+    if (searchTimeout) {
+      clearTimeout(searchTimeout);
+      searchTimeout = null;
+    }
+    showSearchLoading(false);
+    if (microUi.search) {
+      microUi.search.value = '';
+    }
+    rebuildMicroRows();
+    renderMicroList({ resetScroll: true });
+    updateAutocomplete();
+    if (microUi.search) {
+      microUi.search.focus();
+    }
+  }
+
+  function handleSearchInput(rawValue) {
+    searchQuery = rawValue || '';
+    const normalized = normaliseText(searchQuery);
+    if (!normalized) {
+      if (searchTimeout) {
+        clearTimeout(searchTimeout);
+        searchTimeout = null;
+      }
+      showSearchLoading(false);
+      rebuildMicroRows();
+      renderMicroList({ resetScroll: true });
+      updateAutocomplete();
+      return;
+    }
+    if (!microOptionsReady) {
+      return;
+    }
+    if (microUi.autocomplete) {
+      microUi.autocomplete.hidden = true;
+    }
+    showSearchLoading(true);
+    if (searchTimeout) {
+      clearTimeout(searchTimeout);
+    }
+    searchTimeout = window.setTimeout(() => {
+      showSearchLoading(false);
+      rebuildMicroRows();
+      if (!microState.rows.length) {
+        showNoResults(searchQuery);
+      } else {
+        renderMicroList({ resetScroll: true });
+      }
+      updateAutocomplete();
+    }, 280);
+  }
+
+  function showNoResults(query) {
+    if (!microUi.listInner) return;
+    microUi.listInner.style.height = 'auto';
+    const container = document.createElement('div');
+    container.className = 'search-no-results';
+    container.innerHTML = `
+      <svg class="icon-search-empty" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M15.5 14h-.79l-.28-.27A6 6 0 1 0 10 16a6 6 0 0 0 3.73-1.27l.27.28v.79l4.25 4.26a1 1 0 0 0 1.42-1.42zm-5.5 0a4 4 0 1 1 0-8 4 4 0 0 1 0 8z"></path>
+      </svg>
+      <p>Nenhum resultado para <strong>${escapeHtml(query)}</strong></p>
+    `;
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'btn-chip';
+    button.textContent = 'Limpar busca';
+    button.addEventListener('click', () => {
+      clearSearch();
+    });
+    container.appendChild(button);
+    microUi.listInner.replaceChildren(container);
   }
 
   function buildMicroRowElement(row, top) {
