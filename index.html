@@ -2,26 +2,81 @@
 <html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
-    <title>PSH Microbacias - Visualizador Geoespacial</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PSH - Programa de Segurança Hídrica | Visualizador de Microbacias</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
-        body { margin: 0; padding: 0; }
-        #map { height: 100vh; }
-        /* Adicione estilos para sidebar, legendas, etc. */
-        .sidebar { position: absolute; top: 10px; left: 10px; background: white; padding: 10px; z-index: 1000; }
+        body { margin: 0; padding: 0; font-family: Arial, sans-serif; background: #f0f0f0; }
+        #map { height: 100vh; width: 100%; }
+        .sidebar {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 15px;
+            z-index: 1000;
+            border-radius: 10px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+            max-width: 360px;
+            max-height: 85vh;
+            overflow-y: auto;
+            font-size: 14px;
+        }
+        h2, h3 { margin: 0 0 10px 0; color: #1a5fb4; }
+        select, input, button {
+            width: 100%;
+            padding: 8px;
+            margin: 8px 0;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        button {
+            background: #1a5fb4;
+            color: white;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        button:hover { background: #0d47a1; }
+        .layer-group { margin: 15px 0; }
+        .layer-item { margin: 8px 0; }
+        #legend { margin-top: 20px; font-size: 13px; }
+        .legend-item { margin: 6px 0; }
+        .color-box {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            margin-right: 8px;
+            border: 1px solid #666;
+            vertical-align: middle;
+        }
+        .info { padding: 10px; background: #e3f2fd; border-radius: 6px; margin: 10px 0; }
     </style>
 </head>
 <body>
     <div id="map"></div>
+
     <div class="sidebar">
-        <!-- Controles: select para microbacias, checkboxes para layers -->
-        <select id="microbacia-select" multiple>
-            <!-- Options carregadas dinamicamente -->
-        </select>
-        <div id="layers-control">
-            <!-- Checkboxes para camadas -->
+        <h2>PSH Microbacias</h2>
+        <div class="info">
+            <strong>Programa de Segurança Hídrica</strong><br>
+            Governo do Paraná | Banco Mundial
         </div>
-        <div id="legend"></div>
+
+        <h3>Filtro por Microbacia</h3>
+        <input type="text" id="search" placeholder="Buscar por nome ou código...">
+        <select id="microbacia-select" multiple size="12"></select>
+        <button id="select-all">Selecionar Todas</button>
+        <button id="clear">Limpar Seleção</button>
+        <button id="fit">Ajustar ao Mapa</button>
+
+        <h3>Camadas Temáticas</h3>
+        <div id="layers-control"></div>
+
+        <div id="legend">
+            <h3>Legenda e Estatísticas</h3>
+            <div id="stats"></div>
+        </div>
     </div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -29,110 +84,195 @@
     <script src="https://unpkg.com/@turf/turf@6.5.0/turf.min.js"></script>
 
     <script>
-        // Função de debounce para otimização
-        function debounce(fn, ms) {
-            let timer;
-            return (...args) => {
-                clearTimeout(timer);
-                timer = setTimeout(() => fn.apply(this, args), ms);
-            };
-        }
+        // Inicialização do mapa
+        const map = L.map('map').setView([-25.2520, -51.2210], 8);
 
-        // Inicializa mapa
-        const map = L.map('map').setView([-25.5, -49.2], 8); // Centro no Paraná
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+        const basemaps = {
+            "OpenStreetMap": L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '&copy; OpenStreetMap contributors'
+            }),
+            "Esri World Imagery": L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+                attribution: 'Esri, Maxar, GeoEye, Earthstar'
+            }),
+            "CARTO Light": L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+                attribution: '&copy; CARTO'
+            })
+        };
+        basemaps["OpenStreetMap"].addTo(map);
+        L.control.layers(basemaps, {}, { position: 'topright' }).addTo(map);
 
-        // Outros basemaps
-        const esriImagery = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}');
-        // Adicione controle de layers
+        // Camadas e dados
+        let microbaciasLayer = null;
+        let thematicLayers = {};
+        let loadedGeoJSON = {};
 
-        let microbaciasLayer, otherLayers = {}; // Armazena layers
+        const layerConfig = [
+            { id: 'microbacias', name: 'Limites de Microbacias', visible: true, color: '#3388ff' },
+            { id: 'altimetria', name: 'Altimetria (curvas de nível)', visible: false, color: '#8B4513' },
+            { id: 'declividade', name: 'Declividade (%)', visible: false, color: '#d32f2f' },
+            { id: 'uso_solo', name: 'Uso do Solo', visible: true, color: '#4caf50' },
+            { id: 'hidrografia', name: 'Hidrografia', visible: true, color: '#2196f3' },
+            { id: 'nascentes', name: 'Nascentes', visible: true, color: '#00bcd4' },
+            { id: 'pecuaria_bovinos', name: 'Pecuária Bovina (cabeças/ha)', visible: false, color: '#ff9800' },
+            { id: 'agricultura_milho', name: 'Agricultura - Milho', visible: false, color: '#ffeb3b' },
+            { id: 'agricultura_soja', name: 'Agricultura - Soja', visible: false, color: '#cddc39' },
+            { id: 'agrotóxicos', name: 'Uso de Agrotóxicos', visible: false, color: '#9c27b0' }
+        ];
 
-        // Função para carregar GeoJSON.gz
-        async function loadGeoJSON(url) {
+        // Carregar arquivo .geojson.gz
+        async function loadGeoJSON(filename) {
+            if (loadedGeoJSON[filename]) return loadedGeoJSON[filename];
             try {
-                const response = await fetch(url);
-                if (!response.ok) throw new Error(`Falha ao fetch ${url}: ${response.status}`);
-                const arrayBuffer = await response.arrayBuffer();
-                const inflated = pako.inflate(new Uint8Array(arrayBuffer), { to: 'string' });
-                return JSON.parse(inflated);
-            } catch (error) {
-                console.error('Erro ao carregar dados:', error);
-                alert('Erro ao carregar arquivo. Verifique console e servidor local.');
+                const response = await fetch(`data/${filename}.geojson.gz?t=` + Date.now());
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                const buffer = await response.arrayBuffer();
+                const inflated = pako.inflate(new Uint8Array(buffer), { to: 'string' });
+                const geojson = JSON.parse(inflated);
+                loadedGeoJSON[filename] = geojson;
+                return geojson;
+            } catch (err) {
+                console.error(`Erro ao carregar ${filename}:`, err);
                 return null;
             }
         }
 
-        // Exemplo: Carregar microbacias
+        // Inicializar microbacias
         async function initMicrobacias() {
-            const geojson = await loadGeoJSON('data/microbacias.geojson.gz'); // Ajuste path
-            if (!geojson) return;
-            microbaciasLayer = L.geoJSON(geojson, {
-                style: { color: '#00f', weight: 2, fillOpacity: 0 },
+            const data = await loadGeoJSON('microbacias');
+            if (!data) {
+                alert('ERRO: Não foi possível carregar os dados de microbacias.\nVerifique se a pasta "data" está no mesmo diretório.');
+                return;
+            }
+
+            microbaciasLayer = L.geoJSON(data, {
+                style: { color: '#3388ff', weight: 2, fillOpacity: 0.05, opacity: 0.7 },
                 onEachFeature: (feature, layer) => {
-                    layer.bindPopup(`Microbacia: ${feature.properties.nome}`);
+                    const props = feature.properties;
+                    layer.bindPopup(`
+                        <strong>${props.Nome_bacia || 'Microbacia'}</strong><br>
+                        Código: <b>${props.Cod_man}</b><br>
+                        Área: <b>${(turf.area(feature) / 1000000).toFixed(2)} km²</b><br>
+                        Bacia: ${props.Nome_bacia_mae || 'N/D'}
+                    `);
                 }
             }).addTo(map);
 
-            // Preencha select com options
             const select = document.getElementById('microbacia-select');
-            geojson.features.forEach(f => {
+            data.features.forEach(f => {
                 const opt = document.createElement('option');
-                opt.value = f.properties.id; // Assuma ID
-                opt.text = f.properties.nome;
-                select.add(opt);
+                opt.value = f.properties.Cod_man;
+                opt.textContent = `${f.properties.Nome_bacia} (${f.properties.Cod_man})`;
+                select.appendChild(opt);
             });
 
-            // Evento de filtro
-            select.addEventListener('change', debounce(filterLayers, 300));
+            map.fitBounds(microbaciasLayer.getBounds());
+            updateFilters();
         }
 
-        // Função de filtro otimizada com bbox
-        function filterLayers() {
-            const selectedIds = Array.from(document.getElementById('microbacia-select').selectedOptions).map(opt => opt.value);
-            if (!selectedIds.length) return;
+        // Criar controles de camadas
+        function createLayerControls() {
+            const container = document.getElementById('layers-control');
+            layerConfig.forEach(layer => {
+                if (layer.id === 'microbacias') return;
+                const div = document.createElement('div');
+                div.className = 'layer-item';
+                div.innerHTML = `
+                    <label>
+                        <input type="checkbox" id="layer-${layer.id}" ${layer.visible ? 'checked' : ''}>
+                        ${layer.name}
+                    </label>
+                `;
+                container.appendChild(div);
+                document.getElementById(`layer-${layer.id}`).onchange = () => toggleLayer(layer.id);
+            });
+        }
 
-            const selectedFeatures = turf.featureCollection(microbaciasLayer.getLayers().filter(l => selectedIds.includes(l.feature.properties.id)).map(l => l.feature));
-            const bbox = turf.bbox(selectedFeatures);
+        // Alternar camada
+        async function toggleLayer(id) {
+            const checkbox = document.getElementById(`layer-${id}`);
+            if (checkbox.checked) {
+                if (!thematicLayers[id]) {
+                    const data = await loadGeoJSON(id);
+                    if (data) {
+                        thematicLayers[id] = L.geoJSON(data, {
+                            style: { color: layerConfig.find(l => l.id === id).color, weight: 2 },
+                            pointToLayer: (feature, latlng) => L.circleMarker(latlng, { radius: 5, color: layerConfig.find(l => l.id === id).color })
+                        });
+                    }
+                }
+                if (thematicLayers[id]) {
+                    thematicLayers[id].addTo(map);
+                    updateFilters();
+                }
+            } else {
+                if (thematicLayers[id]) {
+                    map.removeLayer(thematicLayers[id]);
+                }
+            }
+        }
 
-            // Zoom para bbox
-            map.fitBounds([[bbox[1], bbox[0]], [bbox[3], bbox[2]]]);
+        // Atualizar filtros e estatísticas
+        function updateFilters() {
+            const selectedCodes = Array.from(document.getElementById('microbacia-select').selectedOptions).map(o => o.value);
+            const statsDiv = document.getElementById('stats');
+            statsDiv.innerHTML = '<p><em>Selecione microbacias para ver estatísticas.</em></p>';
 
-            // Para cada layer ativa, clip com interseção
-            Object.keys(otherLayers).forEach(key => {
-                if (/* checkbox checked */) {
-                    const layerGeo = otherLayers[key]; // Assuma carregado
-                    const clipped = turf.intersect(layerGeo, selectedFeatures); // Ou union/multi
-                    // Atualize layer no mapa
-                    updateLayer(key, clipped);
-                    updateStatsAndLegend(key, clipped);
+            if (selectedCodes.length === 0) return;
+
+            const selectedFeatures = microbaciasLayer.getLayers()
+                .filter(l => selectedCodes.includes(l.feature.properties.Cod_man))
+                .map(l => l.feature);
+
+            if (selectedFeatures.length === 0) return;
+
+            const union = turf.union(...selectedFeatures.map(f => turf.feature(f.geometry)));
+            const areaTotal = turf.area(union) / 1000000;
+
+            let html = `<p><strong>Área total selecionada:</strong> ${areaTotal.toFixed(2)} km²</p>`;
+            html += `<p><strong>Microbacias:</strong> ${selectedCodes.length}</p>`;
+
+            // Estatísticas por camada ativa
+            Object.keys(thematicLayers).forEach(key => {
+                if (map.hasLayer(thematicLayers[key])) {
+                    const clipped = turf.intersect(loadedGeoJSON[key], union);
+                    if (clipped) {
+                        const area = turf.area(clipped) / 1000000;
+                        html += `<p><strong>${layerConfig.find(l => l.id === key).name}:</strong> ${area.toFixed(2)} km²</p>`;
+                    }
                 }
             });
+
+            statsDiv.innerHTML = html;
         }
 
-        // Função para atualizar stats (área, %)
-        function updateStatsAndLegend(key, geojson) {
-            if (!geojson) return;
-            const area = turf.area(geojson) / 1e6; // km²
-            console.log(`Área ${key}: ${area} km²`);
-            // Atualize legenda DOM
-            document.getElementById('legend').innerHTML += `<p>${key}: ${area} km²</p>`;
-        }
+        // Eventos
+        document.getElementById('select-all').onclick = () => {
+            document.querySelectorAll('#microbacia-select option').forEach(opt => opt.selected = true);
+            updateFilters();
+        };
 
-        // Carregue outras camadas similarmente
-        async function initOtherLayers() {
-            // Ex: uso_solo = await loadGeoJSON('data/uso_solo.geojson.gz');
-            // otherLayers['uso_solo'] = uso_solo;
-            // Adicione checkboxes e events
-        }
+        document.getElementById('clear').onclick = () => {
+            document.querySelectorAll('#microbacia-select option').forEach(opt => opt.selected = false);
+            updateFilters();
+        };
 
-        // Verifique projeções (se necessário, adicione Proj4)
-        // L.CRS.EPSG4674 or similar
+        document.getElementById('fit').onclick = () => {
+            if (microbaciasLayer) map.fitBounds(microbaciasLayer.getBounds(), { padding: [50, 50] });
+        };
 
-        // Init
+        document.getElementById('search').oninput = function(e) {
+            const term = e.target.value.toLowerCase();
+            document.querySelectorAll('#microbacia-select option').forEach(opt => {
+                const text = opt.textContent.toLowerCase();
+                opt.style.display = text.includes(term) ? '' : 'none';
+            });
+        };
+
+        document.getElementById('microbacia-select').onchange = updateFilters;
+
+        // Inicialização
+        createLayerControls();
         initMicrobacias();
-        initOtherLayers();
-        map.on('zoomend moveend', debounce(updateStatsAndLegend, 200)); // Exemplo
     </script>
 </body>
 </html>
