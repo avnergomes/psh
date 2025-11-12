@@ -26,6 +26,16 @@ python -m http.server 8000
 # Acesse: http://localhost:8000
 ```
 
+#### Build estático
+
+Para gerar um pacote pronto para distribuição (por exemplo, para publicar em um serviço de hospedagem estática), utilize o script de build:
+
+```bash
+npm install
+npm run build
+# Os arquivos serão gerados em dist/
+```
+
 ### Dashboard Streamlit
 
 ```bash
@@ -42,7 +52,7 @@ streamlit run app.py
 
 - **Microbacias (PSH)** - Delimitação das microbacias do programa
 - **Uso do Solo (Ottobacias)** - Classificação detalhada do uso e cobertura do solo
-- **Uso do Solo em APP** - Análise de conflitos de uso em Áreas de Preservação Permanente
+- **Conflito de Uso** - Análise de conflitos de uso em Áreas de Preservação Permanente
 - **Declividade (Classes %)** - Distribuição das classes de declividade por ottobacia
 - **Curvas de Nível** - Visualização das curvas de nível para análise topográfica
 
